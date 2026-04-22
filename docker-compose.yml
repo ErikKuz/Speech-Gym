@@ -1,0 +1,115 @@
+name: speechgym
+services:
+  postgres:
+    image: postgres:16
+    container_name: speechgym-postgres
+    environment:
+      POSTGRES_DB: speechgym
+      POSTGRES_USER: speechgym
+      POSTGRES_PASSWORD: speechgym
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U speechgym -d speechgym"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  rabbitmq:
+    image: rabbitmq:3-management
+    container_name: speechgym-rabbitmq
+    environment:
+      RABBITMQ_DEFAULT_USER: speechgym
+      RABBITMQ_DEFAULT_PASS: speechgym
+    ports:
+      - "5672:5672"
+      - "15672:15672"
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "check_running"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  minio:
+    image: minio/minio:latest
+    container_name: speechgym-minio
+    environment:
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin
+    command: server /data --console-address ":9001"
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    volumes:
+      - minio_data:/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  minio-init:
+    image: minio/mc:latest
+    container_name: speechgym-minio-init
+    depends_on:
+      minio:
+        condition: service_healthy
+    entrypoint: >
+      /bin/sh -c "
+      mc alias set local http://minio:9000 minioadmin minioadmin &&
+      mc mb --ignore-existing local/speechgym-uploads &&
+      mc mb --ignore-existing local/speechgym-artifacts
+      "
+
+  asr-service:
+    build:
+      context: ./asr-service
+    container_name: speechgym-asr-service
+    environment:
+      ASR_DEVICE: cpu
+      ASR_COMPUTE_TYPE: int8
+      ASR_CPU_THREADS: 4
+      ASR_NUM_WORKERS: 1
+    ports:
+      - "8000:8000"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
+      interval: 30s
+      timeout: 10s
+      retries: 10
+
+  speechgym-api:
+    build:
+      context: ./speechgym-api
+    container_name: speechgym-api
+    environment:
+      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/speechgym
+      SPRING_DATASOURCE_USERNAME: speechgym
+      SPRING_DATASOURCE_PASSWORD: speechgym
+      SPRING_RABBITMQ_HOST: rabbitmq
+      SPRING_RABBITMQ_PORT: 5672
+      SPRING_RABBITMQ_USERNAME: speechgym
+      SPRING_RABBITMQ_PASSWORD: speechgym
+      APP_STORAGE_MINIO_ENDPOINT: http://minio:9000
+      APP_STORAGE_MINIO_ACCESS_KEY: minioadmin
+      APP_STORAGE_MINIO_SECRET_KEY: minioadmin
+      APP_ASR_BASE_URL: http://asr-service:8000
+    ports:
+      - "8080:8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+      minio-init:
+        condition: service_completed_successfully
+      asr-service:
+        condition: service_started
+
+volumes:
+  postgres_data:
+  minio_data:

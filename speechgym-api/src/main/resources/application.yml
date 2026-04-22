@@ -1,0 +1,86 @@
+spring:
+  application:
+    name: speechgym-api
+  datasource:
+    url: jdbc:postgresql://localhost:5432/speechgym
+    username: speechgym
+    password: speechgym
+  jpa:
+    open-in-view: false
+    hibernate:
+      ddl-auto: validate
+    properties:
+      hibernate:
+        jdbc:
+          time_zone: UTC
+  flyway:
+    enabled: true
+    locations: classpath:db/migration
+    validate-migration-naming: true
+  rabbitmq:
+    host: localhost
+    port: 5672
+    username: speechgym
+    password: speechgym
+    listener:
+      simple:
+        default-requeue-rejected: false
+  servlet:
+    multipart:
+      max-file-size: 100MB
+      max-request-size: 100MB
+
+server:
+  error:
+    include-message: never
+
+springdoc:
+  api-docs:
+    path: /v3/api-docs
+  swagger-ui:
+    path: /swagger-ui.html
+    enabled: false
+
+management:
+  endpoints:
+    web:
+      base-path: /actuator
+      exposure:
+        include: health,info
+  endpoint:
+    health:
+      show-details: always
+
+logging:
+  level:
+    root: INFO
+    com.speechgym: INFO
+
+app:
+  api-prefix: /api/v1
+  idempotency:
+    ttl: PT24H
+  jwt:
+    issuer: speechgym-api
+    secret: change-me-change-me-change-me-change-me
+    access-token-ttl: PT15M
+    refresh-token-ttl: P14D
+  rabbit:
+    exchange: speechgym.jobs
+    queue: speechgym.jobs.queue
+    routing-key: speechgym.jobs.process
+  storage:
+    uploads-bucket: speechgym-uploads
+    artifacts-bucket: speechgym-artifacts
+    presigned-url-ttl: PT15M
+    minio:
+      endpoint: http://localhost:9000
+      access-key: minioadmin
+      secret-key: minioadmin
+      secure: false
+  asr:
+    base-url: http://localhost:8000
+    transcribe-path: /transcribe
+    health-path: /health
+    connect-timeout: PT5S
+    read-timeout: PT10M

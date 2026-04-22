@@ -1,0 +1,19 @@
+.idea/
+.vscode/
+.venv/
+
+# Local/runtime data.
+data/
+*.wav
+
+# Java/Maven generated files.
+speechgym-api/target/
+speechgym-api/.codex-backup/
+speechgym-api/.m2repo/
+speechgym-api/.m2wrapper/
+speechgym-api/.mvn/codex-settings.xml
+speechgym-api/speechgym-codex.patch
+
+# Python generated files.
+__pycache__/
+*.py[cod]

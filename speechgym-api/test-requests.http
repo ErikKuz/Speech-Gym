@@ -1,0 +1,248 @@
+    @baseUrl = http://localhost:8080/api/v1
+@email = MaxGord@example.com
+@password = Password123
+@fullName = Smile
+@accessToken = eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJmYTlkM2MxZC1hZTU2LTQ0MmUtYTdiZS0zZDEzZGE2YmI5YTMiLCJmdWxsX25hbWUiOiJTbWlsZSIsInJvbGUiOiJVU0VSIiwiaXNzIjoic3BlZWNoZ3ltLWFwaSIsImV4cCI6MTc3Mzc2MzIxMywidG9rZW5fdHlwZSI6ImFjY2VzcyIsImlhdCI6MTc3Mzc2MjMxMywiZW1haWwiOiJtYXhnb3JkQGV4YW1wbGUuY29tIn0.YpT9K76Z7AewKYU9_g5Kc54-HcyQuKVP27lpqK3iMGg
+@refreshToken = eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJmYTlkM2MxZC1hZTU2LTQ0MmUtYTdiZS0zZDEzZGE2YmI5YTMiLCJmdWxsX25hbWUiOiJTbWlsZSIsInJvbGUiOiJVU0VSIiwiaXNzIjoic3BlZWNoZ3ltLWFwaSIsImV4cCI6MTc3NDk3MTkxMywidG9rZW5fdHlwZSI6InJlZnJlc2giLCJpYXQiOjE3NzM3NjIzMTMsImVtYWlsIjoibWF4Z29yZEBleGFtcGxlLmNvbSJ9.NI4bajICFjfobAKAEHOTquUO6iWglazchpWP2DW63pc
+@sessionId = paste-session-id-here
+@uploadId = paste-upload-id-here
+@jobId = paste-job-id-here
+@reportId = paste-report-id-here
+@sessionCreateKey = 5d1c2ef5-d7ba-4200-9f77-1fe27e0bdac3
+@jobCreateKey = 8bd2fb3c-4ab0-41d9-a97c-51818f9f03a8
+
+### Register user
+POST http://localhost:8080/api/v1/auth/register
+Content-Type: application/json
+
+{
+  "email": "{{email}}",
+  "password": "{{password}}",
+  "fullName": "{{fullName}}"
+}
+
+### Login
+POST {{baseUrl}}/auth/login
+Content-Type: application/json
+
+{
+  "email": "{{email}}",
+  "password": "{{password}}"
+}
+
+### Refresh tokens
+POST {{baseUrl}}/auth/refresh
+Content-Type: application/json
+
+{
+  "refreshToken": "{{refreshToken}}"
+}
+
+### Get current user
+GET {{baseUrl}}/me
+Authorization: Bearer {{accessToken}}
+
+### Create session
+POST {{baseUrl}}/sessions
+Authorization: Bearer {{accessToken}}
+Idempotency-Key: {{sessionCreateKey}}
+Content-Type: application/json
+
+{
+  "title": "Board meeting rehearsal",
+  "goal": "Prepare a concise quarterly update",
+  "scenario": "BUSINESS_UPDATE",
+  "languageCode": "en",
+  "audienceType": "executives",
+  "durationTargetSeconds": 420,
+  "presentationStyle": "confident",
+  "notes": "Focus on risks and roadmap",
+  "difficultyLevel": "MEDIUM",
+  "coachingMode": "BALANCED"
+}
+
+### Repeat create session with the same key and body
+POST {{baseUrl}}/sessions
+Authorization: Bearer {{accessToken}}
+Idempotency-Key: {{sessionCreateKey}}
+Content-Type: application/json
+
+{
+  "title": "Board meeting rehearsal",
+  "goal": "Prepare a concise quarterly update",
+  "scenario": "BUSINESS_UPDATE",
+  "languageCode": "en",
+  "audienceType": "executives",
+  "durationTargetSeconds": 420,
+  "presentationStyle": "confident",
+  "notes": "Focus on risks and roadmap",
+  "difficultyLevel": "MEDIUM",
+  "coachingMode": "BALANCED"
+}
+
+### Same idempotency key with a different body should return 409
+POST {{baseUrl}}/sessions
+Authorization: Bearer {{accessToken}}
+Idempotency-Key: {{sessionCreateKey}}
+Content-Type: application/json
+
+{
+  "title": "Different session title",
+  "goal": "Changed payload",
+  "scenario": "BUSINESS_UPDATE",
+  "languageCode": "en",
+  "audienceType": "executives",
+  "durationTargetSeconds": 420,
+  "presentationStyle": "confident",
+  "notes": "This request should fail with conflict",
+  "difficultyLevel": "MEDIUM",
+  "coachingMode": "BALANCED"
+}
+
+### Create session validation error should return application/problem+json
+POST {{baseUrl}}/sessions
+Authorization: Bearer {{accessToken}}
+Idempotency-Key: 22222222-2222-2222-2222-222222222222
+Content-Type: application/json
+
+{
+  "title": "",
+  "goal": "Practice",
+  "scenario": "",
+  "languageCode": "en",
+  "audienceType": "team",
+  "durationTargetSeconds": 5,
+  "presentationStyle": "confident",
+  "notes": "n/a",
+  "difficultyLevel": "MEDIUM",
+  "coachingMode": "BALANCED"
+}
+
+### Missing Idempotency-Key should return 400
+POST {{baseUrl}}/sessions
+Authorization: Bearer {{accessToken}}
+Content-Type: application/json
+
+{
+  "title": "Header missing example",
+  "goal": "Trigger missing header problem",
+  "scenario": "KEYNOTE",
+  "languageCode": "en",
+  "audienceType": "team",
+  "durationTargetSeconds": 300,
+  "presentationStyle": "confident",
+  "notes": "n/a",
+  "difficultyLevel": "MEDIUM",
+  "coachingMode": "BALANCED"
+}
+
+### Invalid Idempotency-Key format should return 400
+POST {{baseUrl}}/sessions
+Authorization: Bearer {{accessToken}}
+Idempotency-Key: not-a-uuid
+Content-Type: application/json
+
+{
+  "title": "Bad key example",
+  "goal": "Trigger constraint violation",
+  "scenario": "KEYNOTE",
+  "languageCode": "en",
+  "audienceType": "team",
+  "durationTargetSeconds": 300,
+  "presentationStyle": "confident",
+  "notes": "n/a",
+  "difficultyLevel": "MEDIUM",
+  "coachingMode": "BALANCED"
+}
+
+### List sessions
+GET {{baseUrl}}/sessions?page=0&size=20&query=board
+Authorization: Bearer {{accessToken}}
+
+### Get session by id
+GET {{baseUrl}}/sessions/{{sessionId}}
+Authorization: Bearer {{accessToken}}
+
+### Update session
+PATCH {{baseUrl}}/sessions/{{sessionId}}
+Authorization: Bearer {{accessToken}}
+Content-Type: application/json
+
+{
+  "title": "Board meeting rehearsal v2",
+  "goal": "Sharpen the quarterly update",
+  "scenario": "BUSINESS_UPDATE",
+  "languageCode": "en",
+  "audienceType": "executives",
+  "durationTargetSeconds": 480,
+  "presentationStyle": "calm and confident",
+  "notes": "Add a clearer closing summary",
+  "difficultyLevel": "MEDIUM",
+  "coachingMode": "BALANCED"
+}
+
+### Upload audio file
+# Replace ./speech.wav with your real file path if needed.
+POST {{baseUrl}}/sessions/{{sessionId}}/uploads
+Authorization: Bearer {{accessToken}}
+Content-Type: multipart/form-data; boundary=SpeechGymBoundary
+
+--SpeechGymBoundary
+Content-Disposition: form-data; name="file"; filename="speech.wav"
+Content-Type: audio/wav
+
+< ./speech.wav
+--SpeechGymBoundary--
+
+### List uploads
+GET {{baseUrl}}/sessions/{{sessionId}}/uploads
+Authorization: Bearer {{accessToken}}
+
+### Create processing job
+POST {{baseUrl}}/sessions/{{sessionId}}/jobs
+Authorization: Bearer {{accessToken}}
+Idempotency-Key: {{jobCreateKey}}
+Content-Type: application/json
+
+{
+  "uploadId": "{{uploadId}}",
+  "options": {
+    "reportFormat": "FULL",
+    "languageHint": "en"
+  }
+}
+
+### Repeat create job with the same key and body
+POST {{baseUrl}}/sessions/{{sessionId}}/jobs
+Authorization: Bearer {{accessToken}}
+Idempotency-Key: {{jobCreateKey}}
+Content-Type: application/json
+
+{
+  "uploadId": "{{uploadId}}",
+  "options": {
+    "reportFormat": "FULL",
+    "languageHint": "en"
+  }
+}
+
+### List jobs for session
+GET {{baseUrl}}/sessions/{{sessionId}}/jobs
+Authorization: Bearer {{accessToken}}
+
+### Get job status
+GET {{baseUrl}}/jobs/{{jobId}}
+Authorization: Bearer {{accessToken}}
+
+### Requeue job in local profile only
+POST {{baseUrl}}/dev/jobs/{{jobId}}/requeue
+Authorization: Bearer {{accessToken}}
+
+### Get report by id
+GET {{baseUrl}}/reports/{{reportId}}
+Authorization: Bearer {{accessToken}}
+
+### Download report PDF
+GET {{baseUrl}}/reports/{{reportId}}/pdf
+Authorization: Bearer {{accessToken}}
+

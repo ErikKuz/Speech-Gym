@@ -1,0 +1,40 @@
+spring:
+  config:
+    activate:
+      on-profile: local
+  datasource:
+    url: jdbc:postgresql://localhost:5432/speechgym
+    username: speechgym
+    password: speechgym
+  jpa:
+    hibernate:
+      ddl-auto: validate
+  flyway:
+    enabled: true
+  rabbitmq:
+    host: localhost
+    port: 5672
+    username: speechgym
+    password: speechgym
+
+springdoc:
+  swagger-ui:
+    enabled: true
+
+logging:
+  level:
+    com.speechgym: DEBUG
+
+app:
+  asr:
+    base-url: http://localhost:8000
+    transcribe-path: /transcribe
+    health-path: /health
+    connect-timeout: PT5S
+    read-timeout: PT10M
+  storage:
+    minio:
+      endpoint: http://localhost:9000
+      access-key: minioadmin
+      secret-key: minioadmin
+      secure: false
