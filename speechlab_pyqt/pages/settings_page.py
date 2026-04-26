@@ -117,7 +117,7 @@ class SettingsPage(QWidget):
         """)
         btn_back.setFixedHeight(32)
         btn_back.setCursor(Qt.PointingHandCursor)
-        btn_back.clicked.connect(lambda: self.navigate.emit('dashboard', None))
+        btn_back.clicked.connect(lambda: self.navigate.emit('dashboard', {'refresh': True}))
 
         div = QFrame()
         div.setFrameShape(QFrame.VLine)

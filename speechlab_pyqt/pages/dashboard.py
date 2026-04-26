@@ -15,14 +15,6 @@ from styles import (C, BTN_PRIMARY, BTN_OUTLINE_SM, BTN_GHOST, BTN_GHOST_SM,
 from api_client import ApiWorker, api
 from widgets import Card, AvatarLabel, BadgePill, Separator, make_label, show_toast
 
-MOCK_REHEARSALS = [
-    {'id': '1', 'title': 'Q4 Sales Presentation',   'date': 'March 12, 2026', 'duration': '12:34', 'score': 87, 'scenario': 'Executive board meeting'},
-    {'id': '2', 'title': 'Product Launch Keynote',   'date': 'March 10, 2026', 'duration': '18:22', 'score': 92, 'scenario': 'Conference keynote'},
-    {'id': '3', 'title': 'Team Standup Practice',    'date': 'March 8, 2026',  'duration': '5:12',  'score': 78, 'scenario': 'Team meeting'},
-    {'id': '4', 'title': 'Investor Pitch Deck',      'date': 'March 5, 2026',  'duration': '15:45', 'score': 85, 'scenario': 'Investor meeting'},
-    {'id': '5', 'title': 'Conference Workshop',      'date': 'March 1, 2026',  'duration': '28:15', 'score': 90, 'scenario': 'Workshop facilitation'},
-]
-
 
 class RehearsalItem(QFrame):
     """Clickable rehearsal list item for the sidebar."""
@@ -193,11 +185,8 @@ class DashboardPage(QWidget):
         lc_lay.setSpacing(8)
         self.lc_lay = lc_lay
 
-        for r in MOCK_REHEARSALS:
-            item = RehearsalItem(r)
-            item.clicked.connect(self._open_rehearsal)
-            lc_lay.addWidget(item)
-        lc_lay.addStretch()
+        # Start from a neutral state; real sessions are loaded from backend.
+        self._render_sessions([])
 
         list_scroll.setWidget(list_container)
         sb_layout.addWidget(list_scroll, 1)
