@@ -1,51 +1,273 @@
 # pages/rehearsal_chat.py — Rehearsal chat / upload / analysis page
 
 from collections import defaultdict
+from copy import deepcopy
 import os
 from PyQt5.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
     QFrame, QScrollArea, QSizePolicy, QFileDialog, QProgressBar,
-    QGridLayout
+    QGridLayout, QStackedWidget
 )
 from PyQt5.QtCore import Qt, pyqtSignal, QTimer, QPoint
 from PyQt5.QtGui import QFont, QDragEnterEvent, QDropEvent
 
 from styles import (C, BTN_OUTLINE_SM, BTN_PRIMARY,
-                     BTN_WHITE_TRANSPARENT, PROGRESS_STYLE, SCROLLBAR_STYLE)
+                     BTN_WHITE_TRANSPARENT, PROGRESS_STYLE, apply_scroll_area_theme)
 from api_client import ApiWorker, api
-from session_settings import SessionSettingsDialog, session_prompt_signature, session_prompt_text
+from session_settings import (
+    SessionSettingsDialog,
+    format_duration_text,
+    session_prompt_signature,
+    session_prompt_text,
+)
 from widgets import (Card, BadgePill, ScoreCircle, SmallScoreCircle,
-                     NumberCircle, Separator, make_label, show_toast)
+                     NumberCircle, Separator, Switch, make_label, show_toast)
 
 MAX_UPLOAD_SIZE_MB = 100
 MAX_UPLOAD_SIZE_BYTES = MAX_UPLOAD_SIZE_MB * 1024 * 1024
 ALLOWED_AUDIO_EXTENSIONS = ('.mp3', '.wav', '.m4a', '.mp4')
 
+BACKEND_STAGE_LABELS = {
+    'UPLOADED': 'Файл загружен...',
+    'QUEUED': 'Задача в очереди...',
+    'PENDING': 'Ожидаем запуск анализа...',
+    'CREATED': 'Подготавливаем анализ...',
+    'STARTED': 'Анализ запущен...',
+    'PROCESSING': 'Идет обработка...',
+    'TRANSCRIBING': 'Распознаем аудио...',
+    'TRANSCRIPTION': 'Распознаем аудио...',
+    'ANALYZING': 'Анализируем запись...',
+    'REPORTING': 'Формируем отчет...',
+    'GENERATING_REPORT': 'Формируем отчет...',
+    'DONE': 'Анализ завершен',
+    'COMPLETED': 'Анализ завершен',
+    'SUCCESS': 'Анализ завершен',
+    'FAILED': 'Анализ завершился с ошибкой',
+    'ERROR': 'Анализ завершился с ошибкой',
+}
+BACKEND_STAGE_SUBSTRINGS = (
+    ('transcrib', 'Распознаем аудио...'),
+    ('report', 'Формируем отчет...'),
+    ('analy', 'Анализируем запись...'),
+    ('process', 'Идет обработка...'),
+    ('queue', 'Задача в очереди...'),
+    ('wait', 'Ожидаем запуск анализа...'),
+)
+BACKEND_MESSAGE_TRANSLATIONS = {
+    'Unable to transcribe audio with ASR service.': 'Не удалось распознать аудио через ASR-сервис.',
+    'Analysis completed with error.': 'Анализ завершился с ошибкой.',
+}
+BACKEND_MESSAGE_SUBSTRINGS = (
+    ('Connection refused', 'Сервис обработки аудио временно недоступен. Попробуйте снова через несколько секунд.'),
+    ('timed out', 'Сервис обработки аудио не ответил вовремя. Попробуйте еще раз.'),
+)
+
+
+def localize_backend_message(text) -> str:
+    message = str(text or '').strip()
+    if not message:
+        return ''
+    if message in BACKEND_MESSAGE_TRANSLATIONS:
+        return BACKEND_MESSAGE_TRANSLATIONS[message]
+    for needle, translation in BACKEND_MESSAGE_SUBSTRINGS:
+        if needle.lower() in message.lower():
+            return translation
+    return message
+
+
+def localize_job_stage(stage) -> str:
+    raw_stage = str(stage or '').strip()
+    if not raw_stage:
+        return 'Идет обработка...'
+    normalized = raw_stage.upper().replace(' ', '_').replace('-', '_')
+    if normalized in BACKEND_STAGE_LABELS:
+        return BACKEND_STAGE_LABELS[normalized]
+    lowered = raw_stage.lower()
+    for needle, translation in BACKEND_STAGE_SUBSTRINGS:
+        if needle in lowered:
+            return translation
+    return raw_stage
+
 # ── Mock analysis data ─────────────────────────────────────────────────────────
 MOCK_REPORT = {
-    'overallScore': 87,
-    'clarity': 85,
-    'pace': 88,
-    'fillerWords': 12,
-    'confidence': 90,
-    'structure': 87,
-    'emotionalTone': 83,
+    'reportTitle': 'Разбор текущей версии питча',
+    'reportSubtitle': 'Что исправить перед следующим выступлением',
+    'context': {
+        'speechType': 'Инвестиционный питч',
+        'timeLimit': '5 минут',
+        'currentLength': '~6:20',
+        'currentLengthTone': 'warning',
+    },
+    'statusPill': 'Нужна одна сильная итерация правок',
+    'statusSummary': (
+        'В питче уже есть сильные факты и подтвержденный спрос, но он пока не собирается в одну '
+        'убедительную историю. Главные потери возникают в начале, в блоке «почему сейчас» '
+        'и в финальном запросе.'
+    ),
     'strengths': [
-        'Strong opening that captures attention immediately',
-        'Clear articulation and pronunciation throughout',
-        'Good use of pauses for emphasis',
-        'Confident body language and vocal tone',
+        'В питче уже есть конкретные метрики и подтвержденный спрос, поэтому база для сильной версии уже собрана.',
+        'Продукт объясняется через понятную пользовательскую ценность, а не только через общие обещания.',
+        'У спикера чувствуется энергия и реальное знание материала.',
+        'В текущем тексте уже есть несколько сильных опорных тезисов, которые можно усилить без полного переписывания.',
     ],
-    'weaknesses': [
-        "Slight tendency to rush through complex topics",
-        "Could benefit from more varied vocal inflection",
-        "A few instances of filler words ('um', 'uh') during transitions",
+    'blockers': [
+        'Слишком рано уходит фокус в детали продукта, поэтому инвестиционная логика теряется.',
+        'Блок актуальности проекта пока разрознен и не собирается в одно сильное «почему сейчас».',
+        'Финальный запрос звучит слишком общо и не фиксирует структуру предложения.',
+    ],
+    'nextVersionChanges': [
+        'Сократить лишние детали в начале и оставить одно сильное доказательство ценности.',
+        'Собрать блок «почему сейчас» в короткую причинно-следственную связку.',
+        'Добавить более зрелое объяснение, что делает решение труднокопируемым.',
+        'Сделать описание альтернатив взрослее и точнее.',
+        'Закрыть питч конкретным и запоминающимся запросом.',
+    ],
+    'nextVersion': {
+        'title': 'Следующая версия питча',
+        'summary': (
+            'Это собранный черновик после правок. Его можно использовать как основу '
+            'для следующей записи и дальше адаптировать под свой стиль.'
+        ),
+        'duration': '~5:10, укладывается в лимит',
+        'blocks': [
+            {
+                'id': 'intro',
+                'title': 'Вступление',
+                'content': (
+                    'Добрый день. Меня зовут Андрей, я основатель CodeKids. '
+                    'За последние два года родители и школы всерьез приняли формат '
+                    'структурированных онлайн-занятий для детей.'
+                ),
+                'changeKind': 'edited',
+                'changes': ['Собран более сильный контекст'],
+            },
+            {
+                'id': 'product',
+                'title': 'Что делает продукт',
+                'content': (
+                    'CodeKids — это онлайн-платформа, где дети от 6 до 12 лет изучают '
+                    'программирование через создание собственных игр. На первом занятии '
+                    'ребенок получает быстрый результат и может поделиться им с родителями.'
+                ),
+                'changeKind': 'edited',
+                'changes': ['Сокращены детали', 'Фокус на ценности'],
+            },
+            {
+                'id': 'why-now',
+                'title': 'Почему проект актуален сейчас',
+                'content': (
+                    'Рынок открыл окно возможностей: родители готовы платить за понятный '
+                    'онлайн-формат, школы массово докупают внешние программы, а дети уже '
+                    'привыкли учиться через экран.'
+                ),
+                'changeKind': 'combined',
+                'changes': ['Собран единый блок «почему сейчас»'],
+            },
+            {
+                'id': 'moat',
+                'title': 'Что делает решение труднокопируемым',
+                'content': (
+                    'Наша сила не только в платформе, а в пошаговой методологии обучения, '
+                    'которую команда оттачивала в пилотах со школами несколько лет.'
+                ),
+                'changeKind': 'new',
+                'changes': ['Новый блок'],
+            },
+            {
+                'id': 'alternatives',
+                'title': 'Чем это отличается от альтернатив',
+                'content': (
+                    'Scratch перегружен для новичков, YouTube хаотичен, а Code.org не дает '
+                    'ощущения собственного результата. Мы даем структуру, быстрый результат '
+                    'и понятный путь для родителя и ребенка.'
+                ),
+                'changeKind': 'edited',
+                'changes': ['Уточнено позиционирование'],
+            },
+            {
+                'id': 'ask',
+                'title': 'Что предлагаем инвестору',
+                'content': (
+                    'Мы привлекаем $500K на 18 месяцев для масштабирования в 200 школ и '
+                    'запуска B2C-модели. Предлагаем 12% доли и готовы обсуждать детали.'
+                ),
+                'changeKind': 'edited',
+                'changes': ['Конкретизирован финальный запрос'],
+            },
+        ],
+        'note': (
+            'Это рабочая версия на основе текущего питча. Ее задача — ускорить следующую '
+            'выступление, а не навязать чужую лексику слово в слово.'
+        ),
+    },
+    'recommendationsSummary': [
+        'Убрать лишнюю демонстрацию продукта из первых минут.',
+        'Собрать блок «почему сейчас» в одну убедительную конструкцию.',
+        'Добавить блок про труднокопируемость решения.',
+        'Переписать запрос к инвестору в форму конкретного предложения.',
     ],
     'recommendations': [
-        'Practice breathing exercises before presentations to maintain steady pace',
-        'Use sticky notes with key transitions to reduce reliance on filler words',
-        'Record yourself and listen back to identify patterns in vocal variety',
-        'Consider adding one more strategic pause before key points',
+        {
+            'id': 'rec-1',
+            'section': 'Начало',
+            'before': (
+                'Мы довольно долго показываем механику продукта и уходим в детали, '
+                'прежде чем слушатель понимает главную ценность.'
+            ),
+            'after': (
+                'На первом занятии ребенок собирает простую игру и сразу может '
+                'поделиться результатом. Это быстро доказывает ценность и удерживает внимание.'
+            ),
+            'whyOldWasWeaker': (
+                'Старое начало тратит кредит внимания на детали интерфейса вместо того, '
+                'чтобы быстро зафиксировать сильное доказательство ценности.'
+            ),
+            'whyNewIsBetter': (
+                'Новая версия быстрее доводит слушателя до сути продукта и оставляет пространство '
+                'для последующей бизнес-логики.'
+            ),
+            'whatAudienceUnderstands': 'Какую конкретную ценность продукт дает уже в первую минуту объяснения.',
+            'whatAudienceFeels': 'Что спикер контролирует структуру и не теряет нить питча.',
+        },
+        {
+            'id': 'rec-2',
+            'section': 'Почему сейчас',
+            'before': (
+                'Аргументы про рынок и спрос звучат как отдельные наблюдения, а не как единое '
+                'окно возможностей.'
+            ),
+            'after': (
+                'Родители готовы к формату, школы массово закупают внешние решения, а дети '
+                'уже привыкли учиться через экран — значит окно возможностей открыто именно сейчас.'
+            ),
+            'whyOldWasWeaker': (
+                'Разрозненные факты не создают ощущение срочности и не усиливают инвестиционную '
+                'часть истории.'
+            ),
+            'whyNewIsBetter': (
+                'Единый блок «почему сейчас» дает причинно-следственную связку и делает рынок более осязаемым.'
+            ),
+            'whatAudienceUnderstands': 'Почему проект актуален именно в этот момент, а не вообще когда-нибудь.',
+            'whatAudienceFeels': 'Что это реальное окно возможностей, а не набор красивых тезисов.',
+        },
+        {
+            'id': 'rec-3',
+            'section': 'Финальный запрос к инвестору',
+            'before': 'Мы ищем инвестиции для роста и хотим обсудить сотрудничество.',
+            'after': (
+                'Мы привлекаем $500K на 18 месяцев, чтобы масштабироваться в 200 школ и '
+                'запустить B2C-направление. Предлагаем 12% доли.'
+            ),
+            'whyOldWasWeaker': (
+                'Размытый запрос не фиксирует предмет разговора и не создает ощущение готовой сделки.'
+            ),
+            'whyNewIsBetter': (
+                'Конкретный запрос помогает слушателю быстро понять параметры предложения и серьезнее '
+                'отнестись к финалу.'
+            ),
+            'whatAudienceUnderstands': 'Что именно предлагается и на каких базовых условиях.',
+            'whatAudienceFeels': 'Что команда пришла не просто рассказать историю, а закрыть следующий шаг.',
+        },
     ],
 }
 
@@ -159,11 +381,11 @@ class ReportWidget(QFrame):
         # ── Gradient header ────────────────────────────────────────
         header = QFrame()
         header.setObjectName('RHeader')
-        header.setStyleSheet("""
+        header.setStyleSheet(f"""
             QFrame#RHeader {
                 background: qlineargradient(
                     x1:0, y1:0, x2:1, y2:0,
-                    stop:0 #4F46E5, stop:1 #2563EB
+                    stop:0 {C['indigo_600']}, stop:1 {C['blue_600']}
                 );
                 border-radius: 0px;
                 border-top-left-radius: 16px;
@@ -175,16 +397,16 @@ class ReportWidget(QFrame):
 
         h_text = QVBoxLayout()
         h_text.setSpacing(4)
-        h_title = QLabel('Speech Analysis Report')
+        h_title = QLabel('Отчет по анализу речи')
         h_title.setStyleSheet('color: white; font-size: 20px; font-weight: 700; '
                               'background: transparent; border: none;')
-        h_sub = QLabel('AI-Generated Feedback & Insights')
+        h_sub = QLabel('Обратная связь и выводы, сформированные ИИ')
         h_sub.setStyleSheet('color: rgba(199,210,254,1); font-size: 13px; '
                             'background: transparent; border: none;')
         h_text.addWidget(h_title)
         h_text.addWidget(h_sub)
 
-        btn_dl = QPushButton('⬇  Save PDF')
+        btn_dl = QPushButton('⬇  Сохранить PDF')
         btn_dl.setStyleSheet(BTN_WHITE_TRANSPARENT)
         btn_dl.setFixedHeight(36)
         btn_dl.setCursor(Qt.PointingHandCursor)
@@ -206,13 +428,13 @@ class ReportWidget(QFrame):
         score_sec = QVBoxLayout()
         score_sec.setSpacing(10)
         score_sec.setAlignment(Qt.AlignCenter)
-        ov_lbl = QLabel('OVERALL SCORE')
+        ov_lbl = QLabel('ОБЩАЯ ОЦЕНКА')
         ov_lbl.setAlignment(Qt.AlignCenter)
         ov_lbl.setStyleSheet(f'font-size: 11px; font-weight: 600; color: {C["slate_600"]}; '
                              f'letter-spacing: 1px; background: transparent; border: none;')
         score_circle = ScoreCircle(data['overallScore'], size=112)
-        perf_txt = 'Excellent performance!' if data['overallScore'] >= 85 \
-            else ('Good performance!' if data['overallScore'] >= 70 else 'Room for improvement')
+        perf_txt = 'Отличное выступление!' if data['overallScore'] >= 85 \
+            else ('Хорошее выступление!' if data['overallScore'] >= 70 else 'Есть, что улучшить')
         perf_lbl = QLabel(perf_txt)
         perf_lbl.setAlignment(Qt.AlignCenter)
         perf_lbl.setStyleSheet(f'font-size: 14px; color: {C["slate_600"]}; '
@@ -229,17 +451,17 @@ class ReportWidget(QFrame):
         b_lay.addWidget(Separator())
 
         # Metrics grid
-        b_lay.addWidget(make_label('Performance Metrics', size=15, weight=QFont.DemiBold,
+        b_lay.addWidget(make_label('Метрики выступления', size=15, weight=QFont.DemiBold,
                                    color=C['slate_900']))
         metrics_grid = QGridLayout()
         metrics_grid.setSpacing(12)
         metrics = [
-            ('Clarity', data['clarity']),
-            ('Pace', data['pace']),
-            ('Confidence', data['confidence']),
-            ('Structure', data['structure']),
-            ('Emotional Tone', data['emotionalTone']),
-            ('Filler Words', 100 - data['fillerWords']),
+            ('Ясность', data['clarity']),
+            ('Темп', data['pace']),
+            ('Уверенность', data['confidence']),
+            ('Структура', data['structure']),
+            ('Эмоциональный тон', data['emotionalTone']),
+            ('Слова-паразиты', 100 - data['fillerWords']),
         ]
         for i, (lbl, score) in enumerate(metrics):
             metrics_grid.addWidget(MetricCard(lbl, score), i // 3, i % 3)
@@ -252,7 +474,7 @@ class ReportWidget(QFrame):
         s_icon.setStyleSheet(f'color: {C["green_600"]}; font-size: 18px; '
                              f'background: transparent; border: none;')
         s_header.addWidget(s_icon)
-        s_header.addWidget(make_label('Strengths', size=15, weight=QFont.DemiBold,
+        s_header.addWidget(make_label('Сильные стороны', size=15, weight=QFont.DemiBold,
                                       color=C['slate_900']))
         s_header.addStretch()
         b_lay.addLayout(s_header)
@@ -286,7 +508,7 @@ class ReportWidget(QFrame):
         w_icon.setStyleSheet(f'color: {C["amber_600"]}; font-size: 18px; '
                              f'background: transparent; border: none;')
         w_header.addWidget(w_icon)
-        w_header.addWidget(make_label('Areas for Improvement', size=15,
+        w_header.addWidget(make_label('Зоны роста', size=15,
                                       weight=QFont.DemiBold, color=C['slate_900']))
         w_header.addStretch()
         b_lay.addLayout(w_header)
@@ -320,7 +542,7 @@ class ReportWidget(QFrame):
         rec_icon.setStyleSheet(f'color: {C["indigo_600"]}; font-size: 16px; '
                                f'background: transparent; border: none;')
         rec_header.addWidget(rec_icon)
-        rec_header.addWidget(make_label('Actionable Recommendations', size=15,
+        rec_header.addWidget(make_label('Практические рекомендации', size=15,
                                         weight=QFont.DemiBold, color=C['slate_900']))
         rec_header.addStretch()
         b_lay.addLayout(rec_header)
@@ -360,7 +582,7 @@ class ReportWidget(QFrame):
         f_lay = QHBoxLayout(footer)
         f_lay.setContentsMargins(28, 12, 28, 12)
         from datetime import date
-        f_lbl = QLabel(f"Generated by SpeechLab AI  •  {date.today().strftime('%B %d, %Y')}")
+        f_lbl = QLabel(f"Сформировано SpeechGym AI  •  {date.today().strftime('%d.%m.%Y')}")
         f_lbl.setAlignment(Qt.AlignCenter)
         f_lbl.setStyleSheet(f'font-size: 12px; color: {C["slate_500"]}; '
                             f'background: transparent; border: none;')
@@ -368,6 +590,504 @@ class ReportWidget(QFrame):
         f_lay.addWidget(f_lbl)
         f_lay.addStretch()
         root.addWidget(footer)
+
+
+class PitchReportWidget(QFrame):
+    _uid = 0
+    TABS = (
+        ('passport', 'Паспорт питча'),
+        ('newVersion', 'Следующая версия'),
+        ('recommendations', 'Рекомендации'),
+    )
+
+    def __init__(self, data: dict, on_download, parent=None):
+        super().__init__(parent)
+        PitchReportWidget._uid += 1
+        object_name = f'PitchReportWidget{PitchReportWidget._uid}'
+        self.setObjectName(object_name)
+        self._data = deepcopy(data or MOCK_REPORT)
+        self._active_tab = 'passport'
+        self._tab_buttons = {}
+        self.setStyleSheet(f"""
+            QFrame#{object_name} {{
+                background: {C['white']};
+                border: 1px solid {C['slate_200']};
+                border-radius: 20px;
+            }}
+        """)
+
+        root = QVBoxLayout(self)
+        root.setContentsMargins(0, 0, 0, 0)
+        root.setSpacing(0)
+
+        header = QFrame()
+        header.setStyleSheet(f"""
+            background: {C['slate_50']};
+            border: none;
+            border-top-left-radius: 20px;
+            border-top-right-radius: 20px;
+            border-bottom: 1px solid {C['slate_200']};
+        """)
+        header_layout = QVBoxLayout(header)
+        header_layout.setContentsMargins(28, 22, 28, 22)
+        header_layout.setSpacing(16)
+
+        top_row = QHBoxLayout()
+        top_row.setSpacing(14)
+
+        title_col = QVBoxLayout()
+        title_col.setSpacing(4)
+        brand = QLabel('SpeechGym')
+        brand.setStyleSheet(
+            f'color: {C["slate_500"]}; font-size: 11px; font-weight: 700; '
+            'letter-spacing: 1px; background: transparent; border: none;'
+        )
+        title = QLabel(self._data.get('reportTitle') or 'Разбор текущей версии питча')
+        title.setStyleSheet(
+            f'color: {C["slate_900"]}; font-size: 22px; font-weight: 700; '
+            'background: transparent; border: none;'
+        )
+        subtitle = QLabel(self._data.get('reportSubtitle') or '')
+        subtitle.setWordWrap(True)
+        subtitle.setStyleSheet(
+            f'color: {C["slate_600"]}; font-size: 13px; background: transparent; border: none;'
+        )
+        title_col.addWidget(brand)
+        title_col.addWidget(title)
+        title_col.addWidget(subtitle)
+
+        btn_dl = QPushButton('Сохранить PDF')
+        btn_dl.setFixedHeight(36)
+        btn_dl.setCursor(Qt.PointingHandCursor)
+        btn_dl.setStyleSheet(f"""
+            QPushButton {{
+                background: {C['white']};
+                color: {C['slate_700']};
+                border: 1px solid {C['slate_300']};
+                border-radius: 10px;
+                padding: 0 16px;
+                font-size: 13px;
+                font-weight: 600;
+            }}
+            QPushButton:hover {{
+                background: {C['slate_100']};
+                border-color: {C['slate_400']};
+            }}
+            QPushButton:pressed {{
+                background: {C['slate_200']};
+            }}
+        """)
+        btn_dl.clicked.connect(on_download)
+
+        top_row.addLayout(title_col, 1)
+        top_row.addWidget(btn_dl, 0, Qt.AlignTop)
+        header_layout.addLayout(top_row)
+
+        tabs_row = QHBoxLayout()
+        tabs_row.setSpacing(10)
+        for tab_key, label in self.TABS:
+            button = QPushButton(label)
+            button.setCursor(Qt.PointingHandCursor)
+            button.setFixedHeight(38)
+            button.clicked.connect(lambda _, tab_key=tab_key: self._set_active_tab(tab_key))
+            self._tab_buttons[tab_key] = button
+            tabs_row.addWidget(button)
+        tabs_row.addStretch()
+        header_layout.addLayout(tabs_row)
+        root.addWidget(header)
+
+        self.stack = QStackedWidget()
+        self.stack.setStyleSheet('background: transparent; border: none;')
+        root.addWidget(self.stack)
+
+        self._passport_page, self._passport_layout = self._build_page()
+        self._new_version_page, self._new_version_layout = self._build_page()
+        self._recommendations_page, self._recommendations_layout = self._build_page()
+        self.stack.addWidget(self._passport_page)
+        self.stack.addWidget(self._new_version_page)
+        self.stack.addWidget(self._recommendations_page)
+
+        self._populate_passport_page()
+        self._populate_new_version_page()
+        self._populate_recommendations_page()
+        self._refresh_tab_buttons()
+        self._set_active_tab('passport')
+
+        footer = QFrame()
+        footer.setStyleSheet(f"""
+            background: {C['slate_50']};
+            border: none;
+            border-top: 1px solid {C['slate_200']};
+            border-bottom-left-radius: 20px;
+            border-bottom-right-radius: 20px;
+        """)
+        footer_layout = QHBoxLayout(footer)
+        footer_layout.setContentsMargins(28, 12, 28, 12)
+        from datetime import date
+        footer_label = QLabel(f"Сформировано SpeechGym AI  •  {date.today().strftime('%d.%m.%Y')}")
+        footer_label.setAlignment(Qt.AlignCenter)
+        footer_label.setStyleSheet(
+            f'font-size: 12px; color: {C["slate_500"]}; background: transparent; border: none;'
+        )
+        footer_layout.addStretch()
+        footer_layout.addWidget(footer_label)
+        footer_layout.addStretch()
+        root.addWidget(footer)
+
+    def _build_page(self):
+        page = QWidget()
+        page.setStyleSheet('background: transparent;')
+        layout = QVBoxLayout(page)
+        layout.setContentsMargins(28, 24, 28, 28)
+        layout.setSpacing(18)
+        return page, layout
+
+    @staticmethod
+    def _clear_layout(layout):
+        while layout.count():
+            item = layout.takeAt(0)
+            widget = item.widget()
+            child_layout = item.layout()
+            if widget is not None:
+                widget.deleteLater()
+            elif child_layout is not None:
+                PitchReportWidget._clear_layout(child_layout)
+
+    def _set_active_tab(self, tab_key: str):
+        self._active_tab = tab_key
+        self._refresh_tab_buttons()
+        page_map = {
+            'passport': self._passport_page,
+            'newVersion': self._new_version_page,
+            'recommendations': self._recommendations_page,
+        }
+        self.stack.setCurrentWidget(page_map.get(tab_key, self._passport_page))
+
+    def _refresh_tab_buttons(self):
+        for tab_key, button in self._tab_buttons.items():
+            if tab_key == self._active_tab:
+                button.setStyleSheet(f"""
+                    QPushButton {{
+                        background: {C['indigo_600']};
+                        color: #FFFFFF;
+                        border: 1px solid {C['indigo_600']};
+                        border-radius: 10px;
+                        padding: 0 16px;
+                        font-size: 13px;
+                        font-weight: 600;
+                    }}
+                """)
+            else:
+                button.setStyleSheet(f"""
+                    QPushButton {{
+                        background: {C['slate_100']};
+                        color: {C['slate_700']};
+                        border: 1px solid {C['slate_200']};
+                        border-radius: 10px;
+                        padding: 0 16px;
+                        font-size: 13px;
+                        font-weight: 600;
+                    }}
+                    QPushButton:hover {{
+                        background: {C['slate_200']};
+                    }}
+                """)
+
+    @staticmethod
+    def _tone_palette(tone: str) -> dict:
+        palettes = {
+            'success': {'bg': C['green_50'], 'border': C['green_200'], 'text': C['green_600']},
+            'warning': {'bg': C['amber_50'], 'border': C['amber_200'], 'text': C['amber_600']},
+            'danger': {'bg': C['red_50'], 'border': C['red_200'], 'text': C['red_700']},
+            'info': {'bg': C['indigo_50'], 'border': C['indigo_200'], 'text': C['indigo_600']},
+            'accent': {'bg': C['violet_100'], 'border': C['indigo_200'], 'text': C['violet_600']},
+            'neutral': {'bg': C['slate_50'], 'border': C['slate_200'], 'text': C['slate_600']},
+        }
+        return palettes.get(tone, palettes['neutral'])
+
+    def _make_panel(self, *, bg=None, border=None, radius=16):
+        panel = QFrame()
+        panel.setStyleSheet(f"""
+            background: {bg or C['white']};
+            border: 1px solid {border or C['slate_200']};
+            border-radius: {radius}px;
+        """)
+        return panel
+
+    def _make_context_card(self, label: str, value: str, *, tone='neutral'):
+        palette = self._tone_palette(tone)
+        card = self._make_panel(bg=C['white'], border=C['slate_200'], radius=14)
+        layout = QVBoxLayout(card)
+        layout.setContentsMargins(16, 14, 16, 14)
+        layout.setSpacing(6)
+        layout.addWidget(make_label(label, size=11, weight=QFont.Medium, color=C['slate_500']))
+        layout.addWidget(make_label(value, size=15, weight=QFont.DemiBold, color=palette['text'], wrap=True))
+        return card
+
+    def _make_banner(self, pill_text: str, body_text: str, *, tone='info'):
+        palette = self._tone_palette(tone)
+        banner = self._make_panel(bg=palette['bg'], border=palette['border'], radius=16)
+        layout = QVBoxLayout(banner)
+        layout.setContentsMargins(20, 18, 20, 18)
+        layout.setSpacing(10)
+        layout.addWidget(
+            BadgePill(
+                '•',
+                pill_text,
+                bg=palette['text'],
+                border=palette['text'],
+                icon_color='#FFFFFF',
+                text_color='#FFFFFF',
+            ),
+            0,
+            Qt.AlignLeft,
+        )
+        layout.addWidget(make_label(body_text, size=14, color=C['slate_700'], wrap=True))
+        return banner
+
+    def _make_section_card(self, title: str, items: list[str], *, tone='neutral'):
+        palette = self._tone_palette(tone)
+        card = self._make_panel(bg=C['white'], border=C['slate_200'], radius=16)
+        layout = QVBoxLayout(card)
+        layout.setContentsMargins(20, 18, 20, 18)
+        layout.setSpacing(12)
+
+        header = QHBoxLayout()
+        header.setSpacing(10)
+        marker = QLabel('•')
+        marker.setStyleSheet(
+            f'color: {palette["text"]}; font-size: 22px; font-weight: 700; background: transparent; border: none;'
+        )
+        header.addWidget(marker, 0, Qt.AlignTop)
+        header.addWidget(make_label(title, size=18, weight=QFont.Bold, color=C['slate_900']))
+        header.addStretch()
+        layout.addLayout(header)
+
+        for item in items:
+            row = QHBoxLayout()
+            row.setSpacing(10)
+            dot = QLabel('•')
+            dot.setFixedWidth(12)
+            dot.setStyleSheet(
+                f'color: {palette["text"]}; font-size: 18px; background: transparent; border: none;'
+            )
+            row.addWidget(dot, 0, Qt.AlignTop)
+            row.addWidget(make_label(item, size=14, color=C['slate_700'], wrap=True), 1)
+            layout.addLayout(row)
+        return card
+
+    def _make_quote_panel(self, title: str, text: str, *, tone='neutral'):
+        palette = self._tone_palette(tone)
+        panel = self._make_panel(bg=palette['bg'], border=palette['border'], radius=14)
+        layout = QVBoxLayout(panel)
+        layout.setContentsMargins(16, 14, 16, 14)
+        layout.setSpacing(8)
+        layout.addWidget(make_label(title, size=11, weight=QFont.Bold, color=C['slate_500']))
+        quote = make_label(f'“{text}”', size=14, color=C['slate_700'], wrap=True)
+        font = quote.font()
+        font.setItalic(True)
+        quote.setFont(font)
+        layout.addWidget(quote)
+        return panel
+
+    def _make_text_panel(self, title: str, text: str, *, tone='neutral'):
+        palette = self._tone_palette(tone)
+        panel = self._make_panel(bg=palette['bg'], border=palette['border'], radius=14)
+        layout = QVBoxLayout(panel)
+        layout.setContentsMargins(16, 14, 16, 14)
+        layout.setSpacing(6)
+        layout.addWidget(make_label(title, size=12, weight=QFont.Bold, color=C['slate_700']))
+        layout.addWidget(make_label(text, size=13, color=C['slate_700'], wrap=True))
+        return panel
+
+    def _change_badge(self, text: str, kind: str):
+        if kind == 'new':
+            palette = {'bg': C['indigo_100'], 'border': C['indigo_200'], 'text': C['indigo_600'], 'icon': '+'}
+        elif kind == 'combined':
+            palette = {'bg': C['blue_100'], 'border': C['blue_100'], 'text': C['blue_600'], 'icon': '='}
+        else:
+            palette = {'bg': C['amber_100'], 'border': C['amber_200'], 'text': C['amber_600'], 'icon': '~'}
+        return BadgePill(
+            palette['icon'],
+            text,
+            bg=palette['bg'],
+            border=palette['border'],
+            icon_color=palette['text'],
+            text_color=palette['text'],
+        )
+
+    def _populate_passport_page(self):
+        self._clear_layout(self._passport_layout)
+        context = self._data.get('context') or {}
+
+        cards_row = QHBoxLayout()
+        cards_row.setSpacing(12)
+        cards_row.addWidget(self._make_context_card('Тип выступления', context.get('speechType') or 'Инвестиционный питч'))
+        cards_row.addWidget(self._make_context_card('Лимит времени', context.get('timeLimit') or '5 минут'))
+        cards_row.addWidget(
+            self._make_context_card(
+                'Текущая длина',
+                context.get('currentLength') or '~6:20',
+                tone=context.get('currentLengthTone') or 'warning',
+            )
+        )
+        self._passport_layout.addLayout(cards_row)
+        self._passport_layout.addWidget(
+            self._make_banner(
+                self._data.get('statusPill') or 'Нужна доработка',
+                self._data.get('statusSummary') or '',
+                tone='info',
+            )
+        )
+        self._passport_layout.addWidget(
+            self._make_section_card('Что уже сильное', self._data.get('strengths') or [], tone='success')
+        )
+        self._passport_layout.addWidget(
+            self._make_section_card('Что мешает сейчас', self._data.get('blockers') or [], tone='warning')
+        )
+        self._passport_layout.addWidget(
+            self._make_section_card(
+                'Что изменится в следующей версии',
+                self._data.get('nextVersionChanges') or [],
+                tone='info',
+            )
+        )
+        self._passport_layout.addStretch()
+
+    def _populate_new_version_page(self):
+        self._clear_layout(self._new_version_layout)
+        next_version = self._data.get('nextVersion') or {}
+
+        for block in next_version.get('blocks') or []:
+            has_changes = bool(block.get('changes'))
+            kind = block.get('changeKind') or 'edited'
+            if has_changes and kind == 'new':
+                header_bg = C['slate_50']
+                header_border = C['slate_200']
+            elif has_changes and kind == 'combined':
+                header_bg = C['blue_100']
+                header_border = C['blue_100']
+            elif has_changes:
+                header_bg = C['amber_50']
+                header_border = C['amber_200']
+            else:
+                header_bg = C['slate_50']
+                header_border = C['slate_200']
+
+            card = self._make_panel(bg=C['white'], border=C['slate_200'], radius=16)
+            card_layout = QVBoxLayout(card)
+            card_layout.setContentsMargins(0, 0, 0, 0)
+            card_layout.setSpacing(0)
+
+            head = QFrame()
+            head.setStyleSheet(f"""
+                background: {header_bg};
+                border: none;
+                border-bottom: 1px solid {header_border};
+                border-top-left-radius: 16px;
+                border-top-right-radius: 16px;
+            """)
+            head_layout = QHBoxLayout(head)
+            head_layout.setContentsMargins(18, 14, 18, 14)
+            head_layout.setSpacing(10)
+            head_layout.addWidget(make_label(block.get('title') or '', size=15, weight=QFont.Bold))
+            head_layout.addStretch()
+            if has_changes:
+                for change in block.get('changes') or []:
+                    head_layout.addWidget(self._change_badge(change, kind))
+            card_layout.addWidget(head)
+
+            body = QWidget()
+            body_layout = QVBoxLayout(body)
+            body_layout.setContentsMargins(18, 16, 18, 18)
+            body_layout.setSpacing(0)
+            body_layout.addWidget(make_label(block.get('content') or '', size=14, color=C['slate_700'], wrap=True))
+            card_layout.addWidget(body)
+            self._new_version_layout.addWidget(card)
+
+        note_card = self._make_panel(bg=C['blue_50'], border=C['blue_100'], radius=16)
+        note_layout = QVBoxLayout(note_card)
+        note_layout.setContentsMargins(18, 16, 18, 16)
+        note_layout.setSpacing(6)
+        note_layout.addWidget(make_label('Примечание', size=13, weight=QFont.Bold, color=C['slate_700']))
+        note_layout.addWidget(make_label(next_version.get('note') or '', size=13, color=C['slate_700'], wrap=True))
+        self._new_version_layout.addWidget(note_card)
+        self._new_version_layout.addStretch()
+
+    def _populate_recommendations_page(self):
+        self._clear_layout(self._recommendations_layout)
+
+        summary = self._make_panel(bg=C['violet_100'], border=C['indigo_200'], radius=16)
+        summary_layout = QVBoxLayout(summary)
+        summary_layout.setContentsMargins(20, 18, 20, 18)
+        summary_layout.setSpacing(10)
+        summary_layout.addWidget(make_label('Главные улучшения', size=20, weight=QFont.Bold))
+        for item in self._data.get('recommendationsSummary') or []:
+            row = QHBoxLayout()
+            row.setSpacing(8)
+            dot = QLabel('•')
+            dot.setStyleSheet(
+                f'color: {C["violet_600"]}; font-size: 18px; background: transparent; border: none;'
+            )
+            row.addWidget(dot, 0, Qt.AlignTop)
+            row.addWidget(make_label(item, size=13, color=C['slate_700'], wrap=True), 1)
+            summary_layout.addLayout(row)
+        self._recommendations_layout.addWidget(summary)
+
+        for change in self._data.get('recommendations') or []:
+            card = self._make_panel(bg=C['white'], border=C['slate_200'], radius=16)
+            card_layout = QVBoxLayout(card)
+            card_layout.setContentsMargins(0, 0, 0, 0)
+            card_layout.setSpacing(0)
+
+            title_bar = QFrame()
+            title_bar.setStyleSheet(f"""
+                background: {C['indigo_600']};
+                border: none;
+                border-top-left-radius: 16px;
+                border-top-right-radius: 16px;
+            """)
+            title_layout = QHBoxLayout(title_bar)
+            title_layout.setContentsMargins(18, 14, 18, 14)
+            title_layout.addWidget(make_label(change.get('section') or '', size=15, weight=QFont.Bold, color='#FFFFFF'))
+            title_layout.addStretch()
+            card_layout.addWidget(title_bar)
+
+            content = QWidget()
+            content_layout = QVBoxLayout(content)
+            content_layout.setContentsMargins(18, 18, 18, 18)
+            content_layout.setSpacing(14)
+
+            compare_row = QHBoxLayout()
+            compare_row.setSpacing(12)
+            compare_row.addWidget(self._make_quote_panel('Было', change.get('before') or '', tone='danger'))
+            compare_row.addWidget(self._make_quote_panel('Стало', change.get('after') or '', tone='success'))
+            content_layout.addLayout(compare_row)
+
+            explain_row = QHBoxLayout()
+            explain_row.setSpacing(12)
+            explain_row.addWidget(
+                self._make_text_panel('Почему старая версия слабее', change.get('whyOldWasWeaker') or '', tone='warning')
+            )
+            explain_row.addWidget(
+                self._make_text_panel('Почему новая версия лучше', change.get('whyNewIsBetter') or '', tone='success')
+            )
+            content_layout.addLayout(explain_row)
+
+            impact_row = QHBoxLayout()
+            impact_row.setSpacing(12)
+            impact_row.addWidget(
+                self._make_text_panel('Что аудитория понимает', change.get('whatAudienceUnderstands') or '', tone='info')
+            )
+            impact_row.addWidget(
+                self._make_text_panel('Что аудитория чувствует', change.get('whatAudienceFeels') or '', tone='accent')
+            )
+            content_layout.addLayout(impact_row)
+
+            card_layout.addWidget(content)
+            self._recommendations_layout.addWidget(card)
+
+        self._recommendations_layout.addStretch()
 
 
 # ── Upload drop zone ───────────────────────────────────────────────────────────
@@ -414,13 +1134,13 @@ class UploadZone(QFrame):
         """)
         lay.addWidget(icon_box, 0, Qt.AlignCenter)
 
-        lay.addWidget(make_label('Upload your rehearsal audio', size=17,
+        lay.addWidget(make_label('Загрузите аудио выступления', size=17,
                                  weight=QFont.DemiBold, color=C['slate_900'],
                                  align=Qt.AlignHCenter))
-        lay.addWidget(make_label('Drag and drop your audio file here, or click to browse',
+        lay.addWidget(make_label('Перетащите аудиофайл сюда или нажмите, чтобы выбрать его',
                                  size=14, color=C['slate_600'], align=Qt.AlignHCenter))
 
-        btn = QPushButton('⬆  Choose File')
+        btn = QPushButton('⬆  Выбрать файл')
         btn.setStyleSheet(BTN_PRIMARY)
         btn.setFixedHeight(40)
         btn.setFixedWidth(160)
@@ -428,12 +1148,12 @@ class UploadZone(QFrame):
         btn.clicked.connect(self._open_dialog)
         lay.addWidget(btn, 0, Qt.AlignCenter)
 
-        lay.addWidget(make_label('Supports MP3, WAV, M4A, MP4  •  Max file size: 100 MB',
+        lay.addWidget(make_label('Поддерживаются MP3, WAV, M4A, MP4  •  Максимальный размер: 100 МБ',
                                  size=12, color=C['slate_500'], align=Qt.AlignHCenter))
     def _open_dialog(self):
         path, _ = QFileDialog.getOpenFileName(
-            self, 'Select Audio File', '',
-            'Audio Files (*.mp3 *.wav *.m4a *.mp4);;All Files (*)'
+            self, 'Выберите аудиофайл', '',
+            'Аудиофайлы (*.mp3 *.wav *.m4a *.mp4);;Все файлы (*)'
         )
         if path:
             self.file_selected.emit(path)
@@ -499,7 +1219,7 @@ class RehearsalChatPage(QWidget):
         h_lay.setContentsMargins(20, 0, 20, 0)
         h_lay.setSpacing(12)
 
-        btn_back = QPushButton('← Back to Dashboard')
+        btn_back = QPushButton('← Назад к панели')
         btn_back.setStyleSheet(f"""
             QPushButton {{
                 background: {C['slate_100']};
@@ -528,7 +1248,7 @@ class RehearsalChatPage(QWidget):
         divider.setStyleSheet(f'color: {C["slate_200"]}; background: {C["slate_200"]};')
         divider.setFixedWidth(1)
 
-        self.header_title = make_label('Rehearsal Session', size=14,
+        self.header_title = make_label('Сессия выступления', size=14,
                                        weight=QFont.DemiBold, color=C['slate_900'])
         self.header_sub = make_label('', size=13, color=C['slate_500'])
 
@@ -537,7 +1257,7 @@ class RehearsalChatPage(QWidget):
         title_col.addWidget(self.header_title)
         title_col.addWidget(self.header_sub)
 
-        self.btn_edit_settings = QPushButton('Edit settings')
+        self.btn_edit_settings = QPushButton('Изменить настройки')
         self.btn_edit_settings.setStyleSheet(BTN_OUTLINE_SM)
         self.btn_edit_settings.setFixedHeight(32)
         self.btn_edit_settings.setCursor(Qt.PointingHandCursor)
@@ -557,7 +1277,7 @@ class RehearsalChatPage(QWidget):
         self.scroll.setWidgetResizable(True)
         self.scroll.setFrameShape(QFrame.NoFrame)
         self.scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
-        self.scroll.setStyleSheet(SCROLLBAR_STYLE)
+        apply_scroll_area_theme(self.scroll, C['slate_50'])
 
         self.chat_widget = QWidget()
         self.chat_widget.setStyleSheet(f'background: {C["slate_50"]};')
@@ -595,11 +1315,11 @@ class RehearsalChatPage(QWidget):
         self._session = dict(self._config.get('session') or {})
         self._session_id = self._config.get('sessionId') or self._config.get('session', {}).get('sessionId')
         self.btn_edit_settings.setEnabled(bool(self._session_id))
-        self.btn_edit_settings.setText('Edit settings')
+        self.btn_edit_settings.setText('Изменить настройки')
 
         if self._session_id:
             self._apply_session_header(self._session or {
-                'title': self._config.get('title', 'Rehearsal Session'),
+                'title': self._config.get('title', 'Сессия выступления'),
                 'goal': self._config.get('goal', ''),
                 'scenario': self._config.get('goal', ''),
             })
@@ -607,7 +1327,7 @@ class RehearsalChatPage(QWidget):
             return
 
         rehearsal = self._config.get('rehearsal', {})
-        self.header_title.setText(rehearsal.get('title', 'Rehearsal Session'))
+        self.header_title.setText(rehearsal.get('title', 'Сессия выступления'))
         self.header_sub.setText(rehearsal.get('scenario', ''))
         self.btn_edit_settings.setEnabled(False)
         self._load_existing(rehearsal)
@@ -624,7 +1344,7 @@ class RehearsalChatPage(QWidget):
     def _set_settings_busy(self, busy: bool):
         self._settings_busy = busy
         self.btn_edit_settings.setEnabled(bool(self._session_id) and not busy)
-        self.btn_edit_settings.setText('Saving...' if busy else 'Edit settings')
+        self.btn_edit_settings.setText('Сохранение...' if busy else 'Изменить настройки')
 
     def _open_settings_dialog(self):
         if not self._session_id or self._settings_busy:
@@ -633,7 +1353,7 @@ class RehearsalChatPage(QWidget):
         dialog = SessionSettingsDialog(self, self._session or {
             'title': self.header_title.text(),
             'goal': self.header_sub.text(),
-        })
+        }, compact=True)
         if dialog.exec_() != dialog.Accepted:
             return
 
@@ -654,11 +1374,11 @@ class RehearsalChatPage(QWidget):
         self._config['goal'] = self._session.get('goal') or self._config.get('goal', '')
         self._apply_session_header(self._session)
         self._ensure_settings_prompt_visible()
-        show_toast(self, 'Project settings updated.', 'success')
+        show_toast(self, 'Настройки проекта обновлены.', 'success')
 
     def _settings_update_failed(self, message: str):
         self._set_settings_busy(False)
-        show_toast(self, message, 'error')
+        show_toast(self, localize_backend_message(message), 'error')
 
     def _go_back(self):
         self.navigate.emit('dashboard', {'refresh': True})
@@ -779,15 +1499,15 @@ class RehearsalChatPage(QWidget):
         self.inner_lay.addWidget(ai_w)
 
     def _apply_session_header(self, session: dict):
-        self.header_title.setText(session.get('title') or 'Rehearsal Session')
+        self.header_title.setText(session.get('title') or 'Сессия выступления')
         self.header_sub.setText(session.get('goal') or session.get('scenario') or '')
 
     def _ensure_settings_prompt_visible(self, *, scroll=False):
-        prompt_text = session_prompt_text(self._session)
+        prompt_text = session_prompt_text(self._session, compact=True)
         if not prompt_text:
             return
 
-        self._settings_prompt_signature = session_prompt_signature(self._session)
+        self._settings_prompt_signature = session_prompt_signature(self._session, compact=True)
         if self._settings_prompt_widget is not None:
             self.inner_lay.removeWidget(self._settings_prompt_widget)
             self._settings_prompt_widget.deleteLater()
@@ -806,7 +1526,7 @@ class RehearsalChatPage(QWidget):
         self._ensure_settings_prompt_visible()
 
     def _add_report_widget(self, report_data: dict, report_id: str):
-        report = ReportWidget(
+        report = PitchReportWidget(
             report_data,
             lambda report_id=report_id: self._on_download_pdf(report_id),
         )
@@ -841,8 +1561,8 @@ class RehearsalChatPage(QWidget):
 
     def _restore_backend_session(self, token: int):
         self._show_status_state(
-            'Loading rehearsal status',
-            'Checking uploads, analysis jobs, and report data for this session.',
+            'Загрузка статуса выступления',
+            'Проверяем загрузки, задачи анализа и отчеты для этой сессии.',
         )
         self._start_worker(
             lambda: self._fetch_backend_session_state(self._session_id),
@@ -873,7 +1593,7 @@ class RehearsalChatPage(QWidget):
         active_job_id = self._find_latest_active_job_id(attempts)
 
         self._apply_session_header(session or {
-            'title': self.header_title.text() or 'Rehearsal Session',
+                'title': self.header_title.text() or 'Сессия выступления',
             'goal': self.header_sub.text(),
             'scenario': self.header_sub.text(),
         })
@@ -897,28 +1617,28 @@ class RehearsalChatPage(QWidget):
                 if report:
                     report_id = str(report.get('reportId') or '')
                     self._report_id = report_id or self._report_id
-                    self._add_ai_message('Analysis complete! Here\'s your detailed feedback report:')
+                    self._add_ai_message('Анализ завершен. Ниже ваш подробный отчет с обратной связью.')
                     self._add_report_widget(self._map_report(report), report_id)
                     continue
 
                 if not job:
-                    self._add_ai_message('Audio uploaded. You can continue this project by adding another recording.')
+                    self._add_ai_message('Аудио загружено. Вы можете продолжить проект, добавив еще одну запись.')
                     continue
 
                 state = str(job.get('status', '')).upper()
                 if self._is_failed_state(state):
-                    self._add_ai_message(job.get('errorMessage') or 'Analysis failed for this recording.')
+                    self._add_ai_message(localize_backend_message(job.get('errorMessage')) or 'Не удалось завершить анализ этой записи.')
                     continue
 
                 if self._is_completed_state(state):
-                    self._add_ai_message('Analysis finished, but the report is not available yet.')
+                    self._add_ai_message('Анализ завершен, но отчет пока недоступен.')
                     continue
 
                 if str(job.get('jobId') or '') == active_job_id:
                     self._job_id = active_job_id
                     self._start_processing()
                 else:
-                    self._add_ai_message('Analysis is still running for this recording.')
+                    self._add_ai_message('Анализ этой записи все еще выполняется.')
 
             if active_job_id:
                 self._start_polling()
@@ -938,13 +1658,13 @@ class RehearsalChatPage(QWidget):
         if self._state in ('uploading', 'processing'):
             return
         self._show_empty_state()
-        show_toast(self, message, 'error')
+        show_toast(self, localize_backend_message(message), 'error')
 
     def _render_uploaded_bubble(self, upload: dict, scroll=True):
-        filename = upload.get('originalFilename') or 'audio file'
+        filename = upload.get('originalFilename') or 'аудиофайл'
         size_str = self._fmt_size(int(upload.get('sizeBytes') or 0))
         self._has_attempts = True
-        self._add_user_message(f'Uploaded: {filename} ({size_str})', scroll=scroll)
+        self._add_user_message(f'Загружено: {filename} ({size_str})', scroll=scroll)
 
     def _build_attempts(self, uploads: list, jobs: list, reports: list) -> list[dict]:
         jobs_by_upload = defaultdict(list)
@@ -1103,11 +1823,11 @@ class RehearsalChatPage(QWidget):
             border: none;
         """)
         w_lay.addWidget(icon_lbl, 0, Qt.AlignCenter)
-        w_lay.addWidget(make_label('Ready to analyze your rehearsal', size=20,
+        w_lay.addWidget(make_label('Все готово к анализу выступления', size=20,
                                    weight=QFont.DemiBold, color=C['slate_900'],
                                    align=Qt.AlignHCenter))
         w_lay.addWidget(make_label(
-            'Upload your audio recording to receive detailed AI-powered feedback',
+            'Загрузите аудиозапись, чтобы получить подробную обратную связь от ИИ',
             size=14, color=C['slate_600'], align=Qt.AlignHCenter, wrap=True
         ))
         self._add_to_chat(wrapper)
@@ -1120,16 +1840,16 @@ class RehearsalChatPage(QWidget):
 
         ext = os.path.splitext(path)[1].lower()
         if ext not in ALLOWED_AUDIO_EXTENSIONS:
-            show_toast(self, 'Please upload a valid audio file (MP3, WAV, M4A, MP4)', 'error')
+            show_toast(self, 'Загрузите корректный аудиофайл (MP3, WAV, M4A, MP4)', 'error')
             return
 
         size = os.path.getsize(path)
         if size > MAX_UPLOAD_SIZE_BYTES:
-            show_toast(self, f'File size must be less than {MAX_UPLOAD_SIZE_MB} MB', 'error')
+            show_toast(self, f'Размер файла должен быть меньше {MAX_UPLOAD_SIZE_MB} МБ', 'error')
             return
 
         if not self._session_id:
-            show_toast(self, 'Create a backend session before uploading audio', 'error')
+            show_toast(self, 'Сначала создайте сессию на сервере, затем загружайте аудио', 'error')
             return
 
         self._state = 'uploading'
@@ -1153,7 +1873,7 @@ class RehearsalChatPage(QWidget):
         self.inner_lay.addWidget(self._prog_card)
         self.inner_lay.addStretch()
 
-        self._set_upload_progress(10, 'Uploading to backend...')
+        self._set_upload_progress(10, 'Загрузка на сервер...')
         self._start_session_worker(
             session_id,
             lambda: api.upload_audio(session_id, path),
@@ -1191,7 +1911,7 @@ class RehearsalChatPage(QWidget):
         self._prog_bar.setStyleSheet(PROGRESS_STYLE)
         right.addWidget(self._prog_bar)
 
-        self._prog_lbl = make_label('Uploading... 0%', size=13, color=C['slate_600'])
+        self._prog_lbl = make_label('Загрузка... 0%', size=13, color=C['slate_600'])
         right.addWidget(self._prog_lbl)
 
         lay.addLayout(right, 1)
@@ -1207,16 +1927,16 @@ class RehearsalChatPage(QWidget):
     def _tick_upload(self):
         self._prog_val += 10
         self._prog_bar.setValue(self._prog_val)
-        self._prog_lbl.setText(f'Uploading... {self._prog_val}%')
+        self._prog_lbl.setText(f'Загрузка... {self._prog_val}%')
         if self._prog_val >= 100:
             self._prog_timer.stop()
             QTimer.singleShot(200, self._start_processing)
 
     def _upload_done(self, upload: dict):
-        self._set_upload_progress(45, 'Upload stored. Starting analysis...')
+        self._set_upload_progress(45, 'Файл загружен. Запускаем анализ...')
         upload_id = upload.get('uploadId')
         if not upload_id:
-            self._pipeline_failed('Backend did not return uploadId.')
+            self._pipeline_failed('Сервер не вернул uploadId.')
             return
         session_id = self._session_id
         self._start_session_worker(
@@ -1228,9 +1948,9 @@ class RehearsalChatPage(QWidget):
     def _job_created(self, job: dict):
         self._job_id = str(job.get('jobId', ''))
         if not self._job_id:
-            self._pipeline_failed('Backend did not return jobId.')
+            self._pipeline_failed('Сервер не вернул jobId.')
             return
-        self._set_upload_progress(70, 'Analysis queued...')
+        self._set_upload_progress(70, 'Задача анализа создана...')
         self._start_processing()
         self._start_polling()
 
@@ -1259,8 +1979,8 @@ class RehearsalChatPage(QWidget):
         """)
         ai_row.addWidget(ai_icon, 0, Qt.AlignTop)
         ai_row.addWidget(ChatBubbleAI(
-            'Analyzing your rehearsal... This may take a moment while I evaluate '
-            'your delivery, pace, clarity, and overall performance.'
+            'Анализирую ваше выступление... Это может занять немного времени, пока я оцениваю '
+            'подачу, темп, ясность речи и общее качество выступления.'
         ))
         ai_row.addStretch()
         ai_w = QWidget()
@@ -1289,11 +2009,11 @@ class RehearsalChatPage(QWidget):
             f'font-size: 40px; color: {C["indigo_600"]}; background: transparent; border: none;'
         )
         pc_lay.addWidget(spin_lbl, 0, Qt.AlignCenter)
-        pc_lay.addWidget(make_label('Analyzing your rehearsal...', size=17,
+        pc_lay.addWidget(make_label('Анализирую ваше выступление...', size=17,
                                     weight=QFont.DemiBold, color=C['slate_900'],
                                     align=Qt.AlignHCenter))
         pc_lay.addWidget(make_label(
-            'Our AI is evaluating your delivery, pace, clarity, and overall performance.',
+            'ИИ оценивает вашу подачу, темп, ясность речи и общее качество выступления.',
             size=14, color=C['slate_600'], wrap=True, align=Qt.AlignHCenter
         ))
         self.inner_lay.addWidget(proc_card)
@@ -1341,12 +2061,12 @@ class RehearsalChatPage(QWidget):
             self._prog_bar.setValue(max(0, min(int(progress), 100)))
 
         state = str(status.get('status', '')).upper()
-        stage = status.get('currentStage') or state or 'Processing'
+        stage = localize_job_stage(status.get('currentStage') or state or 'PROCESSING')
         if getattr(self, '_prog_lbl', None) is not None:
             self._prog_lbl.setText(stage)
 
         if state in ('FAILED', 'ERROR'):
-            self._pipeline_failed(status.get('errorMessage') or 'Analysis failed.')
+            self._pipeline_failed(localize_backend_message(status.get('errorMessage')) or 'Анализ завершился с ошибкой.')
             return
 
         report_id = status.get('reportId')
@@ -1376,14 +2096,14 @@ class RehearsalChatPage(QWidget):
         self._remove_trailing_spacers()
         resolved_report_id = str(report_id or self._report_id or '')
         self._report_id = resolved_report_id or self._report_id
-        self._add_ai_message('Analysis complete! Here\'s your detailed feedback report:')
+        self._add_ai_message('Анализ завершен. Ниже ваш подробный отчет с обратной связью.')
         report_widget = self._add_report_widget(report_data or MOCK_REPORT, resolved_report_id)
         self._state = 'idle'
         self._add_upload_zone()
         self._ensure_settings_prompt_visible()
 
         if show_success_toast:
-            show_toast(self, 'Analysis complete!', 'success')
+            show_toast(self, 'Анализ завершен!', 'success')
 
         self._request_scroll_to_widget_top(report_widget)
         return
@@ -1401,7 +2121,7 @@ class RehearsalChatPage(QWidget):
             border: none;
         """)
         ai_row.addWidget(ai_icon, 0, Qt.AlignTop)
-        ai_row.addWidget(ChatBubbleAI('Analysis complete! Here\'s your detailed feedback report:'))
+        ai_row.addWidget(ChatBubbleAI('Анализ завершен. Ниже ваш подробный отчет с обратной связью.'))
         ai_row.addStretch()
         ai_w = QWidget()
         ai_w.setStyleSheet('background: transparent;')
@@ -1409,12 +2129,12 @@ class RehearsalChatPage(QWidget):
         self.inner_lay.addWidget(ai_w)
 
         # Report widget
-        report = ReportWidget(report_data or MOCK_REPORT, self._on_download_pdf)
+        report = PitchReportWidget(report_data or MOCK_REPORT, self._on_download_pdf)
         self.inner_lay.addWidget(report)
         self.inner_lay.addStretch()
 
         if show_success_toast:
-            show_toast(self, 'Analysis complete!', 'success')
+            show_toast(self, 'Анализ завершен!', 'success')
 
         QTimer.singleShot(100, lambda: self.scroll.verticalScrollBar().setValue(
             self.scroll.verticalScrollBar().maximum()
@@ -1422,14 +2142,16 @@ class RehearsalChatPage(QWidget):
 
     # ── Existing rehearsal ─────────────────────────────────────────
     def _load_existing(self, rehearsal: dict):
-        report_data = dict(MOCK_REPORT)
-        report_data['overallScore'] = rehearsal.get('score', 87)
+        report_data = self._build_report_payload(
+            score=self._score(rehearsal.get('score', 87)),
+            current_length=str(rehearsal.get('duration') or '').strip(),
+        )
 
         user_row = QHBoxLayout()
         user_row.addStretch()
         user_row.addWidget(
             ChatBubbleUser(
-                f"Uploaded: {rehearsal.get('title', 'rehearsal')}.mp3 "
+                f"Загружено: {rehearsal.get('title', 'выступление')}.mp3 "
                 f"({rehearsal.get('duration', '')})"
             )
         )
@@ -1451,7 +2173,7 @@ class RehearsalChatPage(QWidget):
         """)
         ai_row.addWidget(ai_icon, 0, Qt.AlignTop)
         ai_row.addWidget(ChatBubbleAI(
-            "Great! I've analyzed your rehearsal. Here's your detailed feedback report:"
+            "Готово! Я проанализировал ваше выступление. Ниже подробный отчет с обратной связью."
         ))
         ai_row.addStretch()
         ai_w = QWidget()
@@ -1459,7 +2181,7 @@ class RehearsalChatPage(QWidget):
         ai_w.setLayout(ai_row)
         self.inner_lay.addWidget(ai_w)
 
-        report = ReportWidget(report_data, self._on_download_pdf)
+        report = PitchReportWidget(report_data, self._on_download_pdf)
         self.inner_lay.addWidget(report)
         self.inner_lay.addStretch()
         self._state = 'success'
@@ -1475,22 +2197,116 @@ class RehearsalChatPage(QWidget):
         return f'{b/1024**2:.1f} MB'
 
     def _map_report(self, report: dict) -> dict:
-        filler_count = int(report.get('fillerWordsCount') or 0)
-        pace_wpm = int(report.get('paceWpm') or 0)
-        pace_score = self._score(100 - abs(pace_wpm - 140)) if pace_wpm else 0
-        confidence = self._score(report.get('confidence'))
-        return {
-            'overallScore': self._score(report.get('overallScore')),
-            'clarity': self._score(report.get('clarity')),
-            'pace': pace_score,
-            'fillerWords': max(0, min(filler_count, 100)),
-            'confidence': confidence,
-            'structure': self._score(report.get('structure')),
-            'emotionalTone': confidence,
-            'strengths': report.get('strengths') or ['Report generated successfully.'],
-            'weaknesses': report.get('improvements') or ['No specific improvements returned.'],
-            'recommendations': report.get('recommendations') or ['Keep practicing with new recordings.'],
-        }
+        return self._build_report_payload(
+            score=self._score(report.get('overallScore')),
+            strengths=report.get('strengths') or [],
+            blockers=report.get('improvements') or [],
+            recommendations=report.get('recommendations') or [],
+            current_length=self._report_duration_label(report),
+        )
+
+    def _build_report_payload(
+        self,
+        *,
+        score: int,
+        strengths: list[str] | None = None,
+        blockers: list[str] | None = None,
+        recommendations: list[str] | None = None,
+        current_length: str = '',
+    ) -> dict:
+        strengths = [str(item).strip() for item in (strengths or []) if str(item).strip()]
+        blockers = [str(item).strip() for item in (blockers or []) if str(item).strip()]
+        recommendations = [str(item).strip() for item in (recommendations or []) if str(item).strip()]
+
+        report_data = deepcopy(MOCK_REPORT)
+        report_data['statusPill'] = self._report_status_label(score)
+        report_data['statusSummary'] = self._report_status_summary(score, strengths, blockers)
+
+        if strengths:
+            report_data['strengths'] = strengths[:4]
+        if blockers:
+            report_data['blockers'] = blockers[:4]
+        if recommendations:
+            report_data['nextVersionChanges'] = recommendations[:5]
+            report_data['recommendationsSummary'] = recommendations[:5]
+            report_data['recommendations'] = self._build_recommendation_cards(blockers, recommendations)
+
+        context = dict(report_data.get('context') or {})
+        session = self._session or self._config.get('session') or {}
+        speech_type = (session.get('goal') or session.get('scenario') or session.get('audienceType') or '').strip()
+        if speech_type:
+            context['speechType'] = speech_type[:64]
+
+        duration_target_seconds = int(session.get('durationTargetSeconds') or 0)
+        if duration_target_seconds:
+            context['timeLimit'] = format_duration_text(duration_target_seconds)
+
+        if current_length:
+            context['currentLength'] = current_length
+
+        report_data['context'] = context
+        return report_data
+
+    @staticmethod
+    def _report_status_label(score: int) -> str:
+        if score >= 90:
+            return 'Готово к финальному прогону'
+        if score >= 75:
+            return 'Близко к готовому'
+        return 'Нужна одна сильная итерация правок'
+
+    def _report_status_summary(self, score: int, strengths: list[str], blockers: list[str]) -> str:
+        if score >= 90:
+            return (
+                'Версия уже звучит собранно и уверенно. Следующий шаг — полировка формулировок '
+                'и более точная подача ключевых тезисов.'
+            )
+        if score >= 75:
+            if blockers:
+                return (
+                    'Основа уже сильная, но есть несколько мест, которые еще тормозят убедительность. '
+                    f'В первую очередь стоит добить: {blockers[0]}'
+                )
+            return 'Основа уже сильная, но для следующей версии все еще нужна точечная редактура структуры и подачи.'
+        if strengths:
+            return (
+                'В материале уже есть рабочая база, но текущая версия пока не держит одну собранную линию. '
+                f'Сохраняем сильную сторону: {strengths[0]}'
+            )
+        return (
+            'Питч уже содержит полезный материал, но пока не собран в одну убедительную историю. '
+            'Следующая итерация должна сократить лишнее и усилить структуру.'
+        )
+
+    @staticmethod
+    def _report_duration_label(report: dict) -> str:
+        for key in ('durationSeconds', 'audioDurationSeconds', 'transcriptDurationSeconds', 'durationSec'):
+            try:
+                seconds = int(report.get(key) or 0)
+            except (TypeError, ValueError):
+                seconds = 0
+            if seconds > 0:
+                minutes, remainder = divmod(seconds, 60)
+                return f'~{minutes}:{remainder:02d}'
+        return ''
+
+    @staticmethod
+    def _build_recommendation_cards(blockers: list[str], recommendations: list[str]) -> list[dict]:
+        sections = ['Структура', 'Аргумент', 'Подача', 'Финал']
+        cards = []
+        for index, recommendation in enumerate(recommendations[:4]):
+            blocker = blockers[index] if index < len(blockers) else 'Текущая формулировка звучит слабее и требует уточнения.'
+            cards.append({
+                'id': f'generated-{index + 1}',
+                'section': sections[index] if index < len(sections) else f'Рекомендация {index + 1}',
+                'before': blocker,
+                'after': recommendation,
+                'whyOldWasWeaker': 'Текущая версия создает лишнюю когнитивную нагрузку и замедляет понимание сути.',
+                'whyNewIsBetter': 'Новая формулировка быстрее доводит до ключевого вывода и усиливает ощущение контроля.',
+                'whatAudienceUnderstands': 'Главную мысль быстрее, с меньшим количеством лишних допущений.',
+                'whatAudienceFeels': 'Больше уверенности в спикере и в логике самого питча.',
+            })
+        return cards or deepcopy(MOCK_REPORT['recommendations'])
 
     @staticmethod
     def _score(value) -> int:
@@ -1500,6 +2316,7 @@ class RehearsalChatPage(QWidget):
             return 0
 
     def _pipeline_failed(self, message: str):
+        message = localize_backend_message(message)
         self._state = 'error'
         self._polling = False
         if self._poll_timer is not None:
@@ -1530,14 +2347,14 @@ class RehearsalChatPage(QWidget):
     def _on_download_pdf(self, report_id=None):
         resolved_report_id = str(report_id or self._report_id or '')
         if not resolved_report_id:
-            show_toast(self, 'Report PDF is not available for this item.', 'error')
+            show_toast(self, 'PDF-отчет для этого элемента недоступен.', 'error')
             return
 
         path, _ = QFileDialog.getSaveFileName(
             self,
-            'Save PDF Report',
+            'Сохранить PDF-отчет',
             f'speechgym-report-{resolved_report_id}.pdf',
-            'PDF Files (*.pdf);;All Files (*)',
+            'PDF-файлы (*.pdf);;Все файлы (*)',
         )
         if not path:
             return
@@ -1545,7 +2362,7 @@ class RehearsalChatPage(QWidget):
         self._current_pdf_path = path
         worker = ApiWorker(lambda: api.download_pdf(resolved_report_id), self)
         worker.succeeded.connect(self._pdf_downloaded)
-        worker.failed.connect(lambda message: show_toast(self, message, 'error'))
+        worker.failed.connect(lambda message: show_toast(self, localize_backend_message(message), 'error'))
         worker.finished.connect(lambda: self._forget_worker(worker))
         self._workers.append(worker)
         worker.start()
@@ -1553,4 +2370,4 @@ class RehearsalChatPage(QWidget):
     def _pdf_downloaded(self, content: bytes):
         with open(self._current_pdf_path, 'wb') as pdf_file:
             pdf_file.write(content)
-        show_toast(self, 'PDF report downloaded successfully', 'success')
+        show_toast(self, 'PDF-отчет успешно скачан', 'success')

@@ -10,14 +10,14 @@ from PyQt5.QtGui import QFont
 
 from styles import (C, BTN_PRIMARY, BTN_OUTLINE, BTN_OUTLINE_SM,
                     BTN_DANGER_OUTLINE, BTN_DANGER,
-                    INPUT_STYLE, TEXTAREA_STYLE, COMBOBOX_STYLE, SCROLLBAR_STYLE)
+                    INPUT_STYLE, TEXTAREA_STYLE, COMBOBOX_STYLE, apply_scroll_area_theme)
 from widgets import Card, AvatarLabel, Separator, Switch, make_label, show_toast
 
 
 class ConfirmDeleteDialog(QDialog):
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setWindowTitle('Confirm Deletion')
+        self.setWindowTitle('Подтверждение удаления')
         self.setFixedWidth(440)
         self.setModal(True)
         self.setStyleSheet(f"background: {C['white']};")
@@ -26,22 +26,21 @@ class ConfirmDeleteDialog(QDialog):
         lay.setContentsMargins(28, 28, 28, 20)
         lay.setSpacing(16)
 
-        lay.addWidget(make_label('Are you absolutely sure?', size=17,
+        lay.addWidget(make_label('Вы уверены?', size=17,
                                  weight=QFont.Bold, color=C['slate_900']))
         lay.addWidget(make_label(
-            'This action cannot be undone. This will permanently delete your account and '
-            'remove all your data from our servers, including all rehearsal recordings '
-            'and analysis reports.',
+            'Это действие нельзя отменить. Аккаунт будет удален безвозвратно вместе '
+            'со всеми данными на сервере, включая записи выступлений и отчеты анализа.',
             size=14, color=C['slate_600'], wrap=True
         ))
 
         btn_box = QHBoxLayout()
-        btn_cancel = QPushButton('Cancel')
+        btn_cancel = QPushButton('Отмена')
         btn_cancel.setStyleSheet(BTN_OUTLINE)
         btn_cancel.setFixedHeight(40)
         btn_cancel.clicked.connect(self.reject)
 
-        btn_delete = QPushButton('Yes, delete my account')
+        btn_delete = QPushButton('Да, удалить мой аккаунт')
         btn_delete.setStyleSheet(BTN_DANGER)
         btn_delete.setFixedHeight(40)
         btn_delete.clicked.connect(self.accept)
@@ -95,7 +94,7 @@ class SettingsPage(QWidget):
         h_lay.setContentsMargins(24, 0, 24, 0)
         h_lay.setSpacing(12)
 
-        btn_back = QPushButton('← Back to Dashboard')
+        btn_back = QPushButton('← Назад к панели')
         btn_back.setStyleSheet(f"""
             QPushButton {{
                 background: {C['slate_100']};
@@ -126,7 +125,7 @@ class SettingsPage(QWidget):
 
         h_lay.addWidget(btn_back)
         h_lay.addWidget(div)
-        h_lay.addWidget(make_label('Settings', size=14, weight=QFont.DemiBold,
+        h_lay.addWidget(make_label('Настройки', size=14, weight=QFont.DemiBold,
                                    color=C['slate_900']))
         h_lay.addStretch()
         root.addWidget(header)
@@ -136,7 +135,7 @@ class SettingsPage(QWidget):
         scroll.setWidgetResizable(True)
         scroll.setFrameShape(QFrame.NoFrame)
         scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
-        scroll.setStyleSheet(SCROLLBAR_STYLE)
+        apply_scroll_area_theme(scroll, C['slate_50'])
 
         content = QWidget()
         content.setStyleSheet(f'background: {C["slate_50"]};')
@@ -173,7 +172,7 @@ class SettingsPage(QWidget):
         lay.setContentsMargins(0, 0, 0, 0)
         lay.setSpacing(0)
 
-        lay.addWidget(self._section_header('◉', 'Profile'))
+        lay.addWidget(self._section_header('◉', 'Профиль'))
 
         body = QWidget()
         body.setStyleSheet('background: transparent;')
@@ -189,12 +188,12 @@ class SettingsPage(QWidget):
                              border=C['indigo_200'])
         av_info = QVBoxLayout()
         av_info.setSpacing(6)
-        btn_photo = QPushButton('Change Photo')
+        btn_photo = QPushButton('Изменить фото')
         btn_photo.setStyleSheet(BTN_OUTLINE_SM)
         btn_photo.setFixedHeight(32)
         btn_photo.setFixedWidth(130)
         av_info.addWidget(btn_photo)
-        av_info.addWidget(make_label('JPG, PNG or GIF. Max size 2 MB.',
+        av_info.addWidget(make_label('JPG, PNG или GIF. Максимальный размер 2 МБ.',
                                      size=12, color=C['slate_500']))
         av_row.addWidget(avatar)
         av_row.addLayout(av_info)
@@ -207,18 +206,18 @@ class SettingsPage(QWidget):
         grid.setSpacing(20)
         name_col = QVBoxLayout()
         name_col.setSpacing(8)
-        name_col.addWidget(make_label('Full Name', size=14, weight=QFont.Medium,
+        name_col.addWidget(make_label('Имя и фамилия', size=14, weight=QFont.Medium,
                                       color=C['slate_700']))
-        self.name_input = QLineEdit('Jane Smith')
+        self.name_input = QLineEdit('Иван Иванов')
         self.name_input.setStyleSheet(INPUT_STYLE)
         self.name_input.setFixedHeight(44)
         name_col.addWidget(self.name_input)
 
         email_col = QVBoxLayout()
         email_col.setSpacing(8)
-        email_col.addWidget(make_label('Email', size=14, weight=QFont.Medium,
+        email_col.addWidget(make_label('Электронная почта', size=14, weight=QFont.Medium,
                                        color=C['slate_700']))
-        self.email_input = QLineEdit('jane@company.com')
+        self.email_input = QLineEdit('ivan@example.ru')
         self.email_input.setStyleSheet(INPUT_STYLE)
         self.email_input.setFixedHeight(44)
         email_col.addWidget(self.email_input)
@@ -228,21 +227,21 @@ class SettingsPage(QWidget):
         b_lay.addLayout(grid)
 
         # Bio
-        b_lay.addWidget(make_label('Bio', size=14, weight=QFont.Medium,
+        b_lay.addWidget(make_label('О себе', size=14, weight=QFont.Medium,
                                    color=C['slate_700']))
         self.bio_input = QTextEdit(
-            'Marketing Director focused on improving presentation skills'
+            'Маркетинг-директор, который развивает навыки публичных выступлений'
         )
         self.bio_input.setStyleSheet(TEXTAREA_STYLE)
         self.bio_input.setFixedHeight(88)
         b_lay.addWidget(self.bio_input)
 
         # Timezone
-        b_lay.addWidget(make_label('Timezone', size=14, weight=QFont.Medium,
+        b_lay.addWidget(make_label('Часовой пояс', size=14, weight=QFont.Medium,
                                    color=C['slate_700']))
         self.tz_combo = QComboBox()
-        for tz in ['Eastern Time (ET)', 'Central Time (CT)', 'Mountain Time (MT)',
-                   'Pacific Time (PT)', 'London (GMT)', 'Paris (CET)']:
+        for tz in ['Восточное время (ET)', 'Центральное время (CT)', 'Горное время (MT)',
+                   'Тихоокеанское время (PT)', 'Лондон (GMT)', 'Париж (CET)']:
             self.tz_combo.addItem(tz)
         self.tz_combo.setStyleSheet(COMBOBOX_STYLE)
         b_lay.addWidget(self.tz_combo)
@@ -250,7 +249,7 @@ class SettingsPage(QWidget):
         # Save button
         btn_row = QHBoxLayout()
         btn_row.addStretch()
-        self.btn_save_profile = QPushButton('💾  Save Changes')
+        self.btn_save_profile = QPushButton('💾  Сохранить изменения')
         self.btn_save_profile.setStyleSheet(BTN_PRIMARY)
         self.btn_save_profile.setFixedHeight(40)
         self.btn_save_profile.setCursor(Qt.PointingHandCursor)
@@ -267,7 +266,7 @@ class SettingsPage(QWidget):
         lay = QVBoxLayout(card)
         lay.setContentsMargins(0, 0, 0, 0)
         lay.setSpacing(0)
-        lay.addWidget(self._section_header('◐', 'Light/Dark Theme'))
+        lay.addWidget(self._section_header('◐', 'Светлая / темная тема'))
 
         body = QWidget()
         body.setStyleSheet('background: transparent;')
@@ -278,10 +277,10 @@ class SettingsPage(QWidget):
         row = QHBoxLayout()
         text_col = QVBoxLayout()
         text_col.setSpacing(4)
-        text_col.addWidget(make_label('Dark Theme', size=14, weight=QFont.Medium,
+        text_col.addWidget(make_label('Темная тема', size=14, weight=QFont.Medium,
                                       color=C['slate_900']))
         text_col.addWidget(make_label(
-            'Switches the app appearance between light and dark modes.',
+            'Переключает внешний вид приложения между светлой и темной темой.',
             size=13, color=C['slate_500'], wrap=True
         ))
         self.theme_switch = Switch(checked=self._theme_dark)
@@ -293,7 +292,7 @@ class SettingsPage(QWidget):
 
         btn_row = QHBoxLayout()
         btn_row.addStretch()
-        btn_apply = QPushButton('Apply Theme')
+        btn_apply = QPushButton('Применить тему')
         btn_apply.setStyleSheet(BTN_PRIMARY)
         btn_apply.setFixedHeight(40)
         btn_apply.setCursor(Qt.PointingHandCursor)
@@ -310,7 +309,7 @@ class SettingsPage(QWidget):
         lay = QVBoxLayout(card)
         lay.setContentsMargins(0, 0, 0, 0)
         lay.setSpacing(0)
-        lay.addWidget(self._section_header('🔔', 'Notifications'))
+        lay.addWidget(self._section_header('🔔', 'Уведомления'))
 
         body = QWidget()
         body.setStyleSheet('background: transparent;')
@@ -319,14 +318,14 @@ class SettingsPage(QWidget):
         b_lay.setSpacing(0)
 
         notif_items = [
-            ('emailReports', 'Email Reports',
-             'Receive your analysis reports via email after each rehearsal'),
-            ('weeklyDigest', 'Weekly Digest',
-             'Get a summary of your progress and insights every week'),
-            ('practiceReminders', 'Practice Reminders',
-             'Receive reminders to practice your presentations regularly'),
-            ('productUpdates', 'Product Updates',
-             'Stay informed about new features and improvements'),
+            ('emailReports', 'Отчеты по электронной почте',
+             'Получать отчеты анализа на почту после каждого выступления'),
+            ('weeklyDigest', 'Еженедельная сводка',
+             'Получать еженедельную сводку прогресса и основных выводов'),
+            ('practiceReminders', 'Напоминания о практике',
+             'Получать напоминания о регулярной тренировке выступлений'),
+            ('productUpdates', 'Обновления продукта',
+             'Быть в курсе новых функций и улучшений'),
         ]
 
         self._switches = {}
@@ -351,7 +350,7 @@ class SettingsPage(QWidget):
 
         btn_row = QHBoxLayout()
         btn_row.addStretch()
-        btn_save_n = QPushButton('💾  Save Changes')
+        btn_save_n = QPushButton('💾  Сохранить изменения')
         btn_save_n.setStyleSheet(BTN_PRIMARY)
         btn_save_n.setFixedHeight(40)
         btn_save_n.setCursor(Qt.PointingHandCursor)
@@ -368,7 +367,7 @@ class SettingsPage(QWidget):
         lay = QVBoxLayout(card)
         lay.setContentsMargins(0, 0, 0, 0)
         lay.setSpacing(0)
-        lay.addWidget(self._section_header('🔒', 'Security'))
+        lay.addWidget(self._section_header('🔒', 'Безопасность'))
 
         body = QWidget()
         body.setStyleSheet('background: transparent;')
@@ -380,11 +379,11 @@ class SettingsPage(QWidget):
         pw_row = QHBoxLayout()
         pw_text = QVBoxLayout()
         pw_text.setSpacing(4)
-        pw_text.addWidget(make_label('Password', size=14, weight=QFont.Medium,
+        pw_text.addWidget(make_label('Пароль', size=14, weight=QFont.Medium,
                                      color=C['slate_900']))
-        pw_text.addWidget(make_label('Last changed 3 months ago', size=13,
+        pw_text.addWidget(make_label('Последнее изменение: 3 месяца назад', size=13,
                                      color=C['slate_500']))
-        btn_pw = QPushButton('Change Password')
+        btn_pw = QPushButton('Изменить пароль')
         btn_pw.setStyleSheet(BTN_OUTLINE)
         btn_pw.setFixedHeight(38)
         pw_row.addLayout(pw_text)
@@ -399,11 +398,11 @@ class SettingsPage(QWidget):
         tfa_row = QHBoxLayout()
         tfa_text = QVBoxLayout()
         tfa_text.setSpacing(4)
-        tfa_text.addWidget(make_label('Two-Factor Authentication', size=14,
+        tfa_text.addWidget(make_label('Двухфакторная аутентификация', size=14,
                                       weight=QFont.Medium, color=C['slate_900']))
-        tfa_text.addWidget(make_label('Add an extra layer of security to your account',
+        tfa_text.addWidget(make_label('Добавьте дополнительный уровень защиты аккаунта',
                                       size=13, color=C['slate_500']))
-        btn_tfa = QPushButton('Enable 2FA')
+        btn_tfa = QPushButton('Включить 2FA')
         btn_tfa.setStyleSheet(BTN_OUTLINE)
         btn_tfa.setFixedHeight(38)
         tfa_row.addLayout(tfa_text)
@@ -420,7 +419,7 @@ class SettingsPage(QWidget):
         lay = QVBoxLayout(card)
         lay.setContentsMargins(0, 0, 0, 0)
         lay.setSpacing(0)
-        lay.addWidget(self._section_header('💳', 'Billing & Plan'))
+        lay.addWidget(self._section_header('💳', 'Тариф и оплата'))
 
         body = QWidget()
         body.setStyleSheet('background: transparent;')
@@ -442,11 +441,11 @@ class SettingsPage(QWidget):
         pb_lay.setContentsMargins(16, 14, 16, 14)
         plan_text = QVBoxLayout()
         plan_text.setSpacing(4)
-        plan_text.addWidget(make_label('Current Plan', size=14, weight=QFont.Medium,
+        plan_text.addWidget(make_label('Текущий тариф', size=14, weight=QFont.Medium,
                                        color=C['slate_900']))
-        plan_text.addWidget(make_label('Professional Plan — $29/month', size=13,
+        plan_text.addWidget(make_label('Тариф «Профессиональный» — $29/месяц', size=13,
                                        color=C['slate_600']))
-        btn_upgrade = QPushButton('Upgrade Plan')
+        btn_upgrade = QPushButton('Обновить тариф')
         btn_upgrade.setStyleSheet(BTN_OUTLINE_SM)
         btn_upgrade.setFixedHeight(34)
         pb_lay.addLayout(plan_text)
@@ -461,10 +460,10 @@ class SettingsPage(QWidget):
         pm_row = QHBoxLayout()
         pm_text = QVBoxLayout()
         pm_text.setSpacing(4)
-        pm_text.addWidget(make_label('Payment Method', size=14, weight=QFont.Medium,
+        pm_text.addWidget(make_label('Способ оплаты', size=14, weight=QFont.Medium,
                                      color=C['slate_900']))
-        pm_text.addWidget(make_label('Visa ending in 4242', size=13, color=C['slate_500']))
-        btn_pm = QPushButton('Update Payment')
+        pm_text.addWidget(make_label('Visa, последние цифры 4242', size=13, color=C['slate_500']))
+        btn_pm = QPushButton('Обновить оплату')
         btn_pm.setStyleSheet(BTN_OUTLINE)
         btn_pm.setFixedHeight(38)
         pm_row.addLayout(pm_text)
@@ -479,11 +478,11 @@ class SettingsPage(QWidget):
         bh_row = QHBoxLayout()
         bh_text = QVBoxLayout()
         bh_text.setSpacing(4)
-        bh_text.addWidget(make_label('Billing History', size=14, weight=QFont.Medium,
+        bh_text.addWidget(make_label('История платежей', size=14, weight=QFont.Medium,
                                      color=C['slate_900']))
-        bh_text.addWidget(make_label('View and download past invoices', size=13,
+        bh_text.addWidget(make_label('Просматривайте и скачивайте прошлые счета', size=13,
                                      color=C['slate_500']))
-        btn_bh = QPushButton('View Invoices')
+        btn_bh = QPushButton('Открыть счета')
         btn_bh.setStyleSheet(BTN_OUTLINE)
         btn_bh.setFixedHeight(38)
         bh_row.addLayout(bh_text)
@@ -525,7 +524,7 @@ class SettingsPage(QWidget):
         sh_lay.setSpacing(10)
         icon = QLabel('🗑')
         icon.setStyleSheet('font-size: 16px; background: transparent; border: none;')
-        title = make_label('Danger Zone', size=17, weight=QFont.DemiBold,
+        title = make_label('Опасная зона', size=17, weight=QFont.DemiBold,
                            color=C['red_900'])
         sh_lay.addWidget(icon)
         sh_lay.addWidget(title)
@@ -539,14 +538,14 @@ class SettingsPage(QWidget):
 
         text_col = QVBoxLayout()
         text_col.setSpacing(6)
-        text_col.addWidget(make_label('Delete Account', size=14, weight=QFont.Medium,
+        text_col.addWidget(make_label('Удалить аккаунт', size=14, weight=QFont.Medium,
                                       color=C['slate_900']))
         text_col.addWidget(make_label(
-            'Permanently delete your account and all your data. This action cannot be undone.',
+            'Безвозвратно удалить аккаунт и все данные. Это действие нельзя отменить.',
             size=13, color=C['slate_600'], wrap=True
         ))
 
-        btn_del = QPushButton('Delete Account')
+        btn_del = QPushButton('Удалить аккаунт')
         btn_del.setStyleSheet(BTN_DANGER_OUTLINE)
         btn_del.setFixedHeight(38)
         btn_del.setCursor(Qt.PointingHandCursor)
@@ -560,8 +559,8 @@ class SettingsPage(QWidget):
 
     # ── Section header helper ────────────────────────────────────────
     def _section_header(self, icon_char, title_text):
-        if title_text == 'Profile':
-            title_text = 'User Data'
+        if title_text == 'Профиль':
+            title_text = 'Данные пользователя'
         header = QWidget()
         header.setObjectName('SectionHeader')
         header.setStyleSheet(f"""
@@ -587,16 +586,16 @@ class SettingsPage(QWidget):
 
     # ── Actions ──────────────────────────────────────────────────────
     def _save_profile(self):
-        self.btn_save_profile.setText('Saving...')
+        self.btn_save_profile.setText('Сохранение...')
         self.btn_save_profile.setEnabled(False)
         QTimer.singleShot(1000, lambda: (
-            self.btn_save_profile.setText('💾  Save Changes'),
+            self.btn_save_profile.setText('💾  Сохранить изменения'),
             self.btn_save_profile.setEnabled(True),
-            show_toast(self, 'User data updated successfully', 'success'),
+            show_toast(self, 'Данные пользователя успешно обновлены', 'success'),
         ))
 
     def _save_notifications(self):
-        show_toast(self, 'Notification settings saved successfully', 'success')
+        show_toast(self, 'Настройки уведомлений успешно сохранены', 'success')
 
     def _on_theme_toggled(self, value: bool):
         self._theme_dark = bool(value)
@@ -611,5 +610,5 @@ class SettingsPage(QWidget):
     def _on_delete_account(self):
         dialog = ConfirmDeleteDialog(self)
         if dialog.exec_() == QDialog.Accepted:
-            show_toast(self, 'Account deletion request submitted', 'success')
+            show_toast(self, 'Запрос на удаление аккаунта отправлен', 'success')
             QTimer.singleShot(1500, lambda: self.navigate.emit('welcome', None))

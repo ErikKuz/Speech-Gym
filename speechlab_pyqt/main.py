@@ -39,12 +39,15 @@ import styles
 
 
 class MainWindow(QMainWindow):
+    PUBLIC_PAGES = {'welcome', 'signup', 'login'}
+
     def __init__(self):
         super().__init__()
-        self.setWindowTitle('SpeechLab — AI Speech Rehearsal')
+        self.setWindowTitle('SpeechGym — ИИ для выступлений')
         self.resize(1400, 900)
         self.setMinimumSize(1100, 700)
-        self.current_theme = styles.apply_theme(styles.load_theme(), persist=False)
+        self.current_theme = styles.load_theme()
+        self._active_theme = 'light'
         self._current_page = 'welcome'
         self._current_data = None
 
@@ -68,7 +71,17 @@ class MainWindow(QMainWindow):
             if module is not None:
                 importlib.reload(module)
 
+    def _theme_for_page(self, page_name: str) -> str:
+        return 'light' if page_name in self.PUBLIC_PAGES else self.current_theme
+
+    def _set_runtime_theme(self, theme_name: str) -> None:
+        self._active_theme = styles.apply_theme(theme_name, persist=False)
+        app = QApplication.instance()
+        if app is not None:
+            app.setStyleSheet(styles.get_global_stylesheet())
+
     def _init_pages(self, target_page: str = 'welcome', target_data=None):
+        self._set_runtime_theme(self._theme_for_page(target_page))
         self._reload_ui_modules()
         from pages.welcome import WelcomePage
         from pages.signup import SignUpPage
@@ -116,10 +129,8 @@ class MainWindow(QMainWindow):
         self._current_data = target_data
 
     def _apply_theme_and_rebuild(self, theme_name: str, return_page: str = 'settings'):
-        self.current_theme = styles.apply_theme(theme_name, persist=True)
-        app = QApplication.instance()
-        if app is not None:
-            app.setStyleSheet(styles.get_global_stylesheet())
+        self.current_theme = 'dark' if str(theme_name).lower().strip() == 'dark' else 'light'
+        styles.apply_theme(self.current_theme, persist=True)
         page_data = {'theme': self.current_theme} if return_page == 'settings' else self._current_data
         self._init_pages(target_page=return_page, target_data=page_data)
 
@@ -148,6 +159,10 @@ class MainWindow(QMainWindow):
             payload = dict(data or {})
             payload.setdefault('theme', self.current_theme)
 
+        if self._theme_for_page(page) != self._active_theme:
+            self._init_pages(target_page=page, target_data=payload)
+            return
+
         # Pass data to the target page before switching
         if payload is not None and hasattr(target, 'load_data'):
             target.load_data(payload)
@@ -169,7 +184,7 @@ def main():
     font = QFont('Segoe UI', 10)
     app.setFont(font)
 
-    styles.apply_theme(styles.load_theme(), persist=False)
+    styles.apply_theme('light', persist=False)
     app.setStyleSheet(styles.get_global_stylesheet())
 
     window = MainWindow()

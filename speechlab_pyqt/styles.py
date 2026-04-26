@@ -705,4 +705,99 @@ def get_global_stylesheet() -> str:
     """
 
 
+def scroll_area_stylesheet(background: str | None = None) -> str:
+    bg = background or C['slate_50']
+    return SCROLLBAR_STYLE + f"""
+        QScrollArea {{
+            background: {bg};
+            border: none;
+        }}
+    """
+
+
+def apply_scroll_area_theme(scroll_area, background: str | None = None) -> None:
+    bg = background or C['slate_50']
+    scroll_area.setStyleSheet(scroll_area_stylesheet(bg))
+    viewport = getattr(scroll_area, "viewport", lambda: None)()
+    if viewport is not None:
+        viewport.setStyleSheet(f"background: {bg}; border: none;")
+
+
+def project_input_style(background: str | None = None) -> str:
+    bg = background or C['slate_50']
+    return f"""
+        QLineEdit {{
+            background-color: {bg};
+            border: 1px solid {C['slate_200']};
+            border-radius: 8px;
+            padding: 0 12px;
+            font-size: 14px;
+            color: {C['slate_900']};
+            selection-background-color: {C['indigo_100']};
+            min-height: 44px;
+        }}
+        QLineEdit:focus {{
+            border: 2px solid {C['indigo_600']};
+            padding: 0 11px;
+        }}
+        QLineEdit:disabled {{ background: {C['slate_100']}; color: {C['slate_500']}; }}
+    """
+
+
+def project_textarea_style(background: str | None = None) -> str:
+    bg = background or C['slate_50']
+    return f"""
+        QTextEdit {{
+            background-color: {bg};
+            border: 1px solid {C['slate_200']};
+            border-radius: 8px;
+            padding: 8px 12px;
+            font-size: 14px;
+            color: {C['slate_900']};
+            selection-background-color: {C['indigo_100']};
+        }}
+        QTextEdit:focus {{
+            border: 2px solid {C['indigo_600']};
+            padding: 7px 11px;
+        }}
+    """
+
+
+def project_combobox_style(background: str | None = None) -> str:
+    bg = background or C['slate_50']
+    return f"""
+        QComboBox {{
+            background-color: {bg};
+            border: 1px solid {C['slate_200']};
+            border-radius: 8px;
+            padding: 0 12px;
+            font-size: 14px;
+            color: {C['slate_900']};
+            min-height: 44px;
+        }}
+        QComboBox:focus {{ border: 2px solid {C['indigo_600']}; padding: 0 11px; }}
+        QComboBox::drop-down {{ border: none; width: 32px; }}
+        QComboBox::down-arrow {{
+            width: 0; height: 0;
+            border-left: 5px solid transparent;
+            border-right: 5px solid transparent;
+            border-top: 6px solid {C['slate_500']};
+            margin-right: 10px;
+        }}
+        QComboBox QAbstractItemView {{
+            background: {C['white']};
+            border: 1px solid {C['slate_200']};
+            border-radius: 8px;
+            selection-background-color: {C['indigo_100']};
+            selection-color: {C['indigo_900']};
+            font-size: 14px;
+            outline: none;
+        }}
+        QComboBox QAbstractItemView::item {{
+            padding: 8px 12px;
+            min-height: 32px;
+        }}
+    """
+
+
 refresh_styles()

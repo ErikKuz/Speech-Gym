@@ -48,16 +48,16 @@ class LoginPage(QWidget):
         logo_row.setAlignment(Qt.AlignCenter)
 
         mic_box = IconBox('🎙', size=40, bg=C['indigo_600'], fg='white', radius=10, font_size=18)
-        brand = make_label('SpeechLab', size=20, weight=QFont.Bold, color=C['slate_900'])
+        brand = make_label('SpeechGym', size=20, weight=QFont.Bold, color=C['slate_900'])
         logo_row.addWidget(mic_box)
         logo_row.addWidget(brand)
         center_layout.addLayout(logo_row)
         center_layout.addSpacing(24)
 
         # ── Titles ────────────────────────────────
-        h1 = make_label('Welcome back', size=28, weight=QFont.Bold,
+        h1 = make_label('С возвращением', size=28, weight=QFont.Bold,
                         color=C['slate_900'], align=Qt.AlignHCenter)
-        sub = make_label('Sign in to continue your practice', size=15,
+        sub = make_label('Войдите, чтобы продолжить тренировки', size=15,
                          color=C['slate_600'], align=Qt.AlignHCenter)
         center_layout.addWidget(h1)
         center_layout.addSpacing(6)
@@ -71,20 +71,20 @@ class LoginPage(QWidget):
         card_layout.setSpacing(20)
 
         # Email
-        card_layout.addWidget(make_label('Email', size=14, weight=QFont.Medium,
+        card_layout.addWidget(make_label('Электронная почта', size=14, weight=QFont.Medium,
                                          color=C['slate_700']))
         self.email_input = QLineEdit()
-        self.email_input.setPlaceholderText('jane@company.com')
+        self.email_input.setPlaceholderText('ivan@example.ru')
         self.email_input.setStyleSheet(INPUT_STYLE)
         self.email_input.setFixedHeight(44)
         card_layout.addWidget(self.email_input)
 
         # Password row header
         pw_header = QHBoxLayout()
-        pw_header.addWidget(make_label('Password', size=14, weight=QFont.Medium,
+        pw_header.addWidget(make_label('Пароль', size=14, weight=QFont.Medium,
                                        color=C['slate_700']))
         pw_header.addStretch()
-        forgot = QLabel('<a href="#" style="color:#4F46E5; text-decoration:none;">Forgot password?</a>')
+        forgot = QLabel('<a href="#" style="color:#4F46E5; text-decoration:none;">Забыли пароль?</a>')
         forgot.setStyleSheet('background: transparent; border: none;')
         forgot.setOpenExternalLinks(False)
         forgot.setTextFormat(Qt.RichText)
@@ -99,12 +99,12 @@ class LoginPage(QWidget):
         card_layout.addWidget(self.pw_input)
 
         # Remember me
-        self.remember = QCheckBox('Remember me for 30 days')
+        self.remember = QCheckBox('Запомнить меня на 30 дней')
         self.remember.setStyleSheet(CHECKBOX_STYLE)
         card_layout.addWidget(self.remember)
 
         # Submit button
-        self.btn_submit = QPushButton('Sign In')
+        self.btn_submit = QPushButton('Войти')
         self.btn_submit.setStyleSheet(BTN_PRIMARY)
         self.btn_submit.setFixedHeight(44)
         self.btn_submit.setCursor(Qt.PointingHandCursor)
@@ -116,9 +116,9 @@ class LoginPage(QWidget):
 
         # ── Footer link ───────────────────────────
         foot = QLabel(
-            f'<span style="color:{C["slate_600"]}; font-size:14px;">Don\'t have an account? </span>'
+            f'<span style="color:{C["slate_600"]}; font-size:14px;">Нет аккаунта? </span>'
             f'<a href="#" style="color:{C["indigo_600"]}; font-size:14px; font-weight:600; '
-            f'text-decoration:none;">Sign up for free</a>'
+            f'text-decoration:none;">Зарегистрируйтесь бесплатно</a>'
         )
         foot.setAlignment(Qt.AlignCenter)
         foot.setTextFormat(Qt.RichText)
@@ -138,10 +138,10 @@ class LoginPage(QWidget):
         email = self.email_input.text().strip()
         password = self.pw_input.text()
         if not email or not password:
-            show_toast(self, 'Enter email and password', 'error')
+            show_toast(self, 'Введите электронную почту и пароль', 'error')
             return
 
-        self.btn_submit.setText('Signing in...')
+        self.btn_submit.setText('Вход...')
         self.btn_submit.setEnabled(False)
 
         worker = ApiWorker(lambda: api.login(email, password), self)
@@ -152,12 +152,12 @@ class LoginPage(QWidget):
         worker.start()
 
     def _finish(self, _result):
-        self.btn_submit.setText('Sign In')
+        self.btn_submit.setText('Войти')
         self.btn_submit.setEnabled(True)
         self.navigate.emit('dashboard', {'refresh': True})
 
     def _fail(self, message):
-        self.btn_submit.setText('Sign In')
+        self.btn_submit.setText('Войти')
         self.btn_submit.setEnabled(True)
         show_toast(self, message, 'error')
 

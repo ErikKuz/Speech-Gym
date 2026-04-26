@@ -13,6 +13,43 @@ class ApiError(Exception):
 
 
 class ApiClient:
+    _FIELD_LABELS = {
+        "email": "Электронная почта",
+        "password": "Пароль",
+        "fullName": "Имя и фамилия",
+        "title": "Название",
+        "goal": "Цель",
+        "scenario": "Сценарий",
+        "languageCode": "Язык",
+        "audienceType": "Аудитория",
+        "durationTargetSeconds": "Целевая длительность",
+        "presentationStyle": "Стиль выступления",
+        "notes": "Заметки",
+        "file": "Файл",
+    }
+    _ERROR_TRANSLATIONS = {
+        "Invalid credentials.": "Неверная электронная почта или пароль.",
+        "Refresh token is missing.": "Отсутствует refresh-токен.",
+        "Unexpected PDF response.": "Сервер вернул неожиданный ответ при скачивании PDF.",
+        "You need to sign in first.": "Сначала войдите в аккаунт.",
+        "Validation failed.": "Проверьте заполненные поля.",
+        "Session not found.": "Сессия не найдена.",
+        "Upload not found.": "Загруженный файл не найден.",
+        "Job not found.": "Задача анализа не найдена.",
+        "Report not found.": "Отчет не найден.",
+        "Unable to transcribe audio with ASR service.": "Не удалось распознать аудио через ASR-сервис.",
+        "Access denied.": "Доступ запрещен.",
+        "Forbidden.": "Доступ запрещен.",
+        "Unauthorized.": "Требуется повторный вход в аккаунт.",
+    }
+    _ERROR_SUBSTRINGS = (
+        ("Connection refused", "Сервис временно недоступен. Попробуйте снова через несколько секунд."),
+        ("timed out", "Сервис не ответил вовремя. Попробуйте еще раз."),
+        ("Failed to establish a new connection", "Не удалось подключиться к серверу."),
+        ("Name or service not known", "Не удалось определить адрес сервера."),
+        ("Max retries exceeded", "Сервер временно недоступен. Попробуйте позже."),
+    )
+
     def __init__(self, base_url: Optional[str] = None):
         self.base_url = (base_url or os.getenv("SPEECHGYM_API_URL", "http://localhost:8080/api/v1")).rstrip("/")
         self.session = requests.Session()
@@ -50,7 +87,7 @@ class ApiClient:
 
     def refresh(self) -> dict[str, Any]:
         if not self.refresh_token:
-            raise ApiError("Refresh token is missing.")
+            raise ApiError("Отсутствует refresh-токен.")
         data = self._request(
             "POST",
             "/auth/refresh",
@@ -121,7 +158,7 @@ class ApiClient:
     def download_pdf(self, report_id: str) -> bytes:
         data = self._request("GET", f"/reports/{report_id}/pdf", expect_json=False, timeout=120)
         if not isinstance(data, bytes):
-            raise ApiError("Unexpected PDF response.")
+            raise ApiError("Сервер вернул неожиданный ответ при скачивании PDF.")
         return data
 
     def _store_auth(self, data: dict[str, Any]) -> None:
@@ -148,7 +185,7 @@ class ApiClient:
         request_headers = dict(headers or {})
         if auth:
             if not self.access_token:
-                raise ApiError("You need to sign in first.")
+                raise ApiError("Сначала войдите в аккаунт.")
             request_headers["Authorization"] = f"Bearer {self.access_token}"
 
         response = self.session.request(
@@ -182,22 +219,36 @@ class ApiClient:
         try:
             body = response.json()
         except ValueError:
-            return f"Backend returned HTTP {response.status_code}."
+            return f"Сервер вернул HTTP {response.status_code}."
 
         field_errors = body.get("fieldErrors")
         if field_errors:
             first = field_errors[0]
-            return f"{first.get('field', 'Field')}: {first.get('message', 'Invalid value.')}"
+            field_name = self._FIELD_LABELS.get(str(first.get("field") or "").strip(), "Поле")
+            field_message = self._translate_backend_text(first.get("message")) or "Недопустимое значение."
+            return f"{field_name}: {field_message}"
 
         detail = body.get("detail")
         if detail:
-            return str(detail)
+            return self._translate_backend_text(detail)
 
         title = body.get("title")
         if title:
-            return str(title)
+            return self._translate_backend_text(title)
 
-        return f"Backend returned HTTP {response.status_code}."
+        return f"Сервер вернул HTTP {response.status_code}."
+
+    @classmethod
+    def _translate_backend_text(cls, text: Any) -> str:
+        message = str(text or "").strip()
+        if not message:
+            return ""
+        if message in cls._ERROR_TRANSLATIONS:
+            return cls._ERROR_TRANSLATIONS[message]
+        for needle, translation in cls._ERROR_SUBSTRINGS:
+            if needle.lower() in message.lower():
+                return translation
+        return message
 
 
 class ApiWorker(QThread):

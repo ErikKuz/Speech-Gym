@@ -51,8 +51,8 @@ class WelcomePage(QWidget):
         title.setTextFormat(Qt.RichText)
         title.setText(
             f'<span style="font-size:42px; font-weight:700; color:{C["slate_900"]};">'
-            f'Master Your<br>'
-            f'<span style="color:{C["indigo_600"]};">Public Speaking</span>'
+            f'Прокачайте свои<br>'
+            f'<span style="color:{C["indigo_600"]};">публичные выступления</span>'
             f'</span>'
         )
         title.setWordWrap(True)
@@ -62,8 +62,8 @@ class WelcomePage(QWidget):
 
         # Sub-description
         desc = make_label(
-            'Practice presentations with confidence. Upload your rehearsals and '
-            'receive detailed AI-generated feedback to improve your delivery, pace, and impact.',
+            'Готовьтесь к выступлениям уверенно. Загружайте свои записи и получайте '
+            'подробную обратную связь от ИИ, чтобы улучшить подачу, темп и убедительность.',
             size=16, color=C['slate_600'], wrap=True
         )
         left.addWidget(desc)
@@ -120,17 +120,17 @@ class WelcomePage(QWidget):
         right.setSpacing(16)
 
         feature_cards = [
-            ('🎙', 'Upload & Rehearse',
-             'Simply upload your practice recording and let our AI analyze '
-             'your performance in real-time.',
+            ('🎙', 'Загрузите выступление',
+             'Просто загрузите запись своего выступления, и ИИ проанализирует '
+             'ваше выступление.',
              C['indigo_100'], C['indigo_600']),
-            ('📊', 'Detailed Analytics',
-             'Get insights on pace, clarity, filler words, confidence, and '
-             'emotional tone with actionable metrics.',
+            ('📊', 'Подробная аналитика',
+             'Получайте выводы по темпу, ясности речи, словам-паразитам, уверенности '
+             'и эмоциональной подаче с понятными рекомендациями.',
              C['blue_100'], C['blue_600']),
-            ('📄', 'Professional Reports',
-             'Receive comprehensive PDF feedback reports you can save and '
-             'review before your big presentation.',
+            ('📄', 'Профессиональные отчеты',
+             'Получайте подробные PDF-отчеты, которые можно сохранить и '
+             'пересмотреть перед важным выступлением.',
              C['violet_100'], C['violet_600']),
         ]
 

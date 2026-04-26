@@ -46,15 +46,15 @@ class SignUpPage(QWidget):
         logo_row.setSpacing(10)
         logo_row.setAlignment(Qt.AlignCenter)
         mic_box = IconBox('🎙', size=40, bg=C['indigo_600'], fg='white', radius=10, font_size=18)
-        brand = make_label('SpeechLab', size=20, weight=QFont.Bold, color=C['slate_900'])
+        brand = make_label('SpeechGym', size=20, weight=QFont.Bold, color=C['slate_900'])
         logo_row.addWidget(mic_box)
         logo_row.addWidget(brand)
         cl.addLayout(logo_row)
         cl.addSpacing(24)
 
-        h1 = make_label('Create your account', size=28, weight=QFont.Bold,
+        h1 = make_label('Создайте аккаунт', size=28, weight=QFont.Bold,
                         color=C['slate_900'], align=Qt.AlignHCenter)
-        sub = make_label('Start improving your presentations today', size=15,
+        sub = make_label('Начните улучшать свои выступления уже сегодня', size=15,
                          color=C['slate_600'], align=Qt.AlignHCenter)
         cl.addWidget(h1)
         cl.addSpacing(6)
@@ -68,25 +68,25 @@ class SignUpPage(QWidget):
         card_layout.setSpacing(20)
 
         # Full Name
-        card_layout.addWidget(make_label('Full Name', size=14, weight=QFont.Medium,
+        card_layout.addWidget(make_label('Имя и фамилия', size=14, weight=QFont.Medium,
                                          color=C['slate_700']))
         self.name_input = QLineEdit()
-        self.name_input.setPlaceholderText('Jane Smith')
+        self.name_input.setPlaceholderText('Иван Иванов')
         self.name_input.setStyleSheet(INPUT_STYLE)
         self.name_input.setFixedHeight(44)
         card_layout.addWidget(self.name_input)
 
         # Email
-        card_layout.addWidget(make_label('Email', size=14, weight=QFont.Medium,
+        card_layout.addWidget(make_label('Электронная почта', size=14, weight=QFont.Medium,
                                          color=C['slate_700']))
         self.email_input = QLineEdit()
-        self.email_input.setPlaceholderText('jane@company.com')
+        self.email_input.setPlaceholderText('ivan@example.ru')
         self.email_input.setStyleSheet(INPUT_STYLE)
         self.email_input.setFixedHeight(44)
         card_layout.addWidget(self.email_input)
 
         # Password
-        card_layout.addWidget(make_label('Password', size=14, weight=QFont.Medium,
+        card_layout.addWidget(make_label('Пароль', size=14, weight=QFont.Medium,
                                          color=C['slate_700']))
         self.pw_input = QLineEdit()
         self.pw_input.setPlaceholderText('••••••••')
@@ -97,13 +97,13 @@ class SignUpPage(QWidget):
 
         # Terms checkbox
         self.terms_cb = QCheckBox(
-            'I agree to the Terms of Service and Privacy Policy'
+            'Я принимаю условия использования и политику конфиденциальности'
         )
         self.terms_cb.setStyleSheet(CHECKBOX_STYLE)
         card_layout.addWidget(self.terms_cb)
 
         # Submit
-        self.btn_submit = QPushButton('Create Account')
+        self.btn_submit = QPushButton('Создать аккаунт')
         self.btn_submit.setStyleSheet(BTN_PRIMARY)
         self.btn_submit.setFixedHeight(44)
         self.btn_submit.setCursor(Qt.PointingHandCursor)
@@ -115,9 +115,9 @@ class SignUpPage(QWidget):
 
         # Footer
         foot = QLabel(
-            f'<span style="color:{C["slate_600"]}; font-size:14px;">Already have an account? </span>'
+            f'<span style="color:{C["slate_600"]}; font-size:14px;">Уже есть аккаунт? </span>'
             f'<a href="#" style="color:{C["indigo_600"]}; font-size:14px; font-weight:600; '
-            f'text-decoration:none;">Sign in</a>'
+            f'text-decoration:none;">Войти</a>'
         )
         foot.setAlignment(Qt.AlignCenter)
         foot.setTextFormat(Qt.RichText)
@@ -137,16 +137,16 @@ class SignUpPage(QWidget):
         email = self.email_input.text().strip()
         password = self.pw_input.text()
         if not full_name or not email or not password:
-            show_toast(self, 'Fill in name, email and password', 'error')
+            show_toast(self, 'Заполните имя, электронную почту и пароль', 'error')
             return
         if len(password) < 8:
-            show_toast(self, 'Password must be at least 8 characters', 'error')
+            show_toast(self, 'Пароль должен содержать не менее 8 символов', 'error')
             return
         if not self.terms_cb.isChecked():
-            show_toast(self, 'Accept the terms to continue', 'error')
+            show_toast(self, 'Подтвердите согласие с условиями, чтобы продолжить', 'error')
             return
 
-        self.btn_submit.setText('Creating account...')
+        self.btn_submit.setText('Создание аккаунта...')
         self.btn_submit.setEnabled(False)
 
         worker = ApiWorker(lambda: api.register(email, password, full_name), self)
@@ -157,12 +157,12 @@ class SignUpPage(QWidget):
         worker.start()
 
     def _finish(self, _result):
-        self.btn_submit.setText('Create Account')
+        self.btn_submit.setText('Создать аккаунт')
         self.btn_submit.setEnabled(True)
         self.navigate.emit('dashboard', {'refresh': True})
 
     def _fail(self, message):
-        self.btn_submit.setText('Create Account')
+        self.btn_submit.setText('Создать аккаунт')
         self.btn_submit.setEnabled(True)
         show_toast(self, message, 'error')
 
