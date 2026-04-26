@@ -1,5 +1,6 @@
 package com.speechgym.reports;
 
+import java.util.List;
 import java.util.UUID;
 
 import org.springframework.http.ResponseEntity;
@@ -12,7 +13,7 @@ import com.speechgym.common.security.CurrentUserService;
 import com.speechgym.reports.dto.ReportSummaryResponse;
 
 @RestController
-@RequestMapping("/api/v1/reports")
+@RequestMapping("/api/v1")
 public class ReportController {
     private final ReportService reportService;
     private final CurrentUserService currentUserService;
@@ -22,12 +23,17 @@ public class ReportController {
         this.currentUserService = currentUserService;
     }
 
-    @GetMapping("/{reportId}")
+    @GetMapping("/sessions/{sessionId}/reports")
+    public List<ReportSummaryResponse> list(@PathVariable UUID sessionId) {
+        return reportService.listBySession(currentUserService.requireUserId(), sessionId);
+    }
+
+    @GetMapping("/reports/{reportId}")
     public ReportSummaryResponse get(@PathVariable UUID reportId) {
         return reportService.get(currentUserService.requireUserId(), reportId);
     }
 
-    @GetMapping("/{reportId}/pdf")
+    @GetMapping("/reports/{reportId}/pdf")
     public ResponseEntity<byte[]> downloadPdf(@PathVariable UUID reportId) {
         return reportService.downloadPdf(currentUserService.requireUserId(), reportId);
     }

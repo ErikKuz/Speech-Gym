@@ -78,6 +78,21 @@ class ApiClient:
             json=payload,
         )
 
+    def get_session(self, session_id: str) -> dict[str, Any]:
+        return self._request("GET", f"/sessions/{session_id}")
+
+    def update_session(self, session_id: str, payload: dict[str, Any]) -> dict[str, Any]:
+        return self._request("PATCH", f"/sessions/{session_id}", json=payload)
+
+    def list_uploads(self, session_id: str) -> list[dict[str, Any]]:
+        return self._request("GET", f"/sessions/{session_id}/uploads")
+
+    def list_jobs(self, session_id: str) -> list[dict[str, Any]]:
+        return self._request("GET", f"/sessions/{session_id}/jobs")
+
+    def list_reports(self, session_id: str) -> list[dict[str, Any]]:
+        return self._request("GET", f"/sessions/{session_id}/reports")
+
     def upload_audio(self, session_id: str, file_path: str) -> dict[str, Any]:
         path = Path(file_path)
         content_type = mimetypes.guess_type(path.name)[0] or "application/octet-stream"

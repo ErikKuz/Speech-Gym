@@ -2,6 +2,7 @@ package com.speechgym.reports;
 
 import java.util.Map;
 import java.util.UUID;
+import java.util.List;
 
 import org.springframework.http.ContentDisposition;
 import org.springframework.http.HttpHeaders;
@@ -14,6 +15,7 @@ import com.speechgym.artifacts.ArtifactEntity;
 import com.speechgym.artifacts.ArtifactRepository;
 import com.speechgym.common.error.ResourceNotFoundException;
 import com.speechgym.reports.dto.ReportSummaryResponse;
+import com.speechgym.sessions.SessionService;
 import com.speechgym.storage.StoredObject;
 import com.speechgym.storage.StorageService;
 
@@ -22,21 +24,32 @@ public class ReportService {
     private final ReportRepository reportRepository;
     private final ArtifactRepository artifactRepository;
     private final StorageService storageService;
+    private final SessionService sessionService;
 
     public ReportService(
         ReportRepository reportRepository,
         ArtifactRepository artifactRepository,
-        StorageService storageService
+        StorageService storageService,
+        SessionService sessionService
     ) {
         this.reportRepository = reportRepository;
         this.artifactRepository = artifactRepository;
         this.storageService = storageService;
+        this.sessionService = sessionService;
     }
 
     @Transactional(readOnly = true)
     public ReportSummaryResponse get(UUID userId, UUID reportId) {
         ReportEntity report = requireOwnedReport(userId, reportId);
         return toResponse(report);
+    }
+
+    @Transactional(readOnly = true)
+    public List<ReportSummaryResponse> listBySession(UUID userId, UUID sessionId) {
+        sessionService.requireOwnedSession(userId, sessionId);
+        return reportRepository.findBySessionIdAndUserIdOrderByCreatedAtAsc(sessionId, userId).stream()
+            .map(this::toResponse)
+            .toList();
     }
 
     @Transactional(readOnly = true)

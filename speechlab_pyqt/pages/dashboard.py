@@ -1,6 +1,5 @@
 # pages/dashboard.py — Dashboard page
 
-import re
 from datetime import datetime
 from PyQt5.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
@@ -13,6 +12,14 @@ from PyQt5.QtGui import QFont
 from styles import (C, BTN_PRIMARY, BTN_OUTLINE_SM, BTN_GHOST, BTN_GHOST_SM,
                     INPUT_STYLE, TEXTAREA_STYLE, COMBOBOX_STYLE, SCROLLBAR_STYLE)
 from api_client import ApiWorker, api
+from session_settings import (
+    AUDIENCE_OPTIONS,
+    DEFAULT_AUDIENCE,
+    DEFAULT_STYLE,
+    LANGUAGE_OPTIONS,
+    STYLE_OPTIONS,
+    build_session_payload_from_form,
+)
 from widgets import Card, AvatarLabel, BadgePill, Separator, make_label, show_toast
 
 MOCK_REHEARSALS = [
@@ -284,8 +291,8 @@ class DashboardPage(QWidget):
         lang_col.addWidget(make_label('Language', size=14, weight=QFont.Medium,
                                       color=C['slate_700']))
         self.lang_combo = QComboBox()
-        for item in ['English', 'Spanish', 'French', 'German', 'Mandarin']:
-            self.lang_combo.addItem(item)
+        for label, code in LANGUAGE_OPTIONS:
+            self.lang_combo.addItem(label, code)
         self.lang_combo.setStyleSheet(COMBOBOX_STYLE)
         lang_col.addWidget(self.lang_combo)
 
@@ -313,8 +320,7 @@ class DashboardPage(QWidget):
                                      color=C['slate_700']))
         self.aud_combo = QComboBox()
         self.aud_combo.addItem('Select audience', '')
-        for item in ['Executive/C-Suite', 'Team/Colleagues', 'Conference/Public',
-                     'Investors', 'Students/Academic']:
+        for item in AUDIENCE_OPTIONS:
             self.aud_combo.addItem(item)
         self.aud_combo.setStyleSheet(COMBOBOX_STYLE)
         aud_col.addWidget(self.aud_combo)
@@ -325,8 +331,7 @@ class DashboardPage(QWidget):
                                        color=C['slate_700']))
         self.style_combo = QComboBox()
         self.style_combo.addItem('Select style', '')
-        for item in ['Professional', 'Conversational', 'Motivational',
-                     'Educational', 'Persuasive']:
+        for item in STYLE_OPTIONS:
             self.style_combo.addItem(item)
         self.style_combo.setStyleSheet(COMBOBOX_STYLE)
         style_col.addWidget(self.style_combo)
@@ -398,7 +403,7 @@ class DashboardPage(QWidget):
                 'sessionId': rehearsal.get('sessionId'),
                 'title': rehearsal.get('title'),
                 'goal': rehearsal.get('goal') or rehearsal.get('scenario'),
-                'is_new': True,
+                'is_new': False,
             })
             return
         self.navigate.emit('rehearsal', {'rehearsal': rehearsal, 'is_new': False})
@@ -480,22 +485,19 @@ class DashboardPage(QWidget):
         audience = self.aud_combo.currentText()
         style = self.style_combo.currentText()
         if self.aud_combo.currentData() == '':
-            audience = 'General audience'
+            audience = DEFAULT_AUDIENCE
         if self.style_combo.currentData() == '':
-            style = 'General'
+            style = DEFAULT_STYLE
 
-        return {
-            'title': title,
-            'goal': goal,
-            'scenario': (goal or title)[:100],
-            'languageCode': self._language_code(self.lang_combo.currentText()),
-            'audienceType': audience[:100],
-            'durationTargetSeconds': self._parse_duration_seconds(self.dur_input.text()),
-            'presentationStyle': style[:100],
-            'notes': self.notes_input.toPlainText().strip(),
-            'difficultyLevel': 'INTERMEDIATE',
-            'coachingMode': 'BALANCED',
-        }
+        return build_session_payload_from_form(
+            title=title,
+            goal=goal,
+            language_label=self.lang_combo.currentText(),
+            audience_type=audience,
+            duration_text=self.dur_input.text(),
+            presentation_style=style,
+            notes=self.notes_input.toPlainText(),
+        )
 
     def _sign_out(self):
         api.clear_auth()
@@ -504,22 +506,6 @@ class DashboardPage(QWidget):
     def _forget_worker(self, worker):
         if worker in self._workers:
             self._workers.remove(worker)
-
-    @staticmethod
-    def _parse_duration_seconds(text: str) -> int:
-        match = re.search(r'\d+', text or '')
-        minutes = int(match.group(0)) if match else 15
-        return max(30, min(minutes * 60, 7200))
-
-    @staticmethod
-    def _language_code(language: str) -> str:
-        return {
-            'English': 'en',
-            'Spanish': 'es',
-            'French': 'fr',
-            'German': 'de',
-            'Mandarin': 'zh',
-        }.get(language, 'en')
 
     @staticmethod
     def _format_date(value: str) -> str:

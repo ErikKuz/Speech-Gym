@@ -1,19 +1,25 @@
 # pages/rehearsal_chat.py — Rehearsal chat / upload / analysis page
 
+from collections import defaultdict
 import os
 from PyQt5.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
     QFrame, QScrollArea, QSizePolicy, QFileDialog, QProgressBar,
     QGridLayout
 )
-from PyQt5.QtCore import Qt, pyqtSignal, QTimer
+from PyQt5.QtCore import Qt, pyqtSignal, QTimer, QPoint
 from PyQt5.QtGui import QFont, QDragEnterEvent, QDropEvent
 
 from styles import (C, BTN_OUTLINE_SM, BTN_PRIMARY,
-                    BTN_WHITE_TRANSPARENT, PROGRESS_STYLE, SCROLLBAR_STYLE)
+                     BTN_WHITE_TRANSPARENT, PROGRESS_STYLE, SCROLLBAR_STYLE)
 from api_client import ApiWorker, api
+from session_settings import SessionSettingsDialog, session_prompt_signature, session_prompt_text
 from widgets import (Card, BadgePill, ScoreCircle, SmallScoreCircle,
                      NumberCircle, Separator, make_label, show_toast)
+
+MAX_UPLOAD_SIZE_MB = 100
+MAX_UPLOAD_SIZE_BYTES = MAX_UPLOAD_SIZE_MB * 1024 * 1024
+ALLOWED_AUDIO_EXTENSIONS = ('.mp3', '.wav', '.m4a', '.mp4')
 
 # ── Mock analysis data ─────────────────────────────────────────────────────────
 MOCK_REPORT = {
@@ -422,9 +428,8 @@ class UploadZone(QFrame):
         btn.clicked.connect(self._open_dialog)
         lay.addWidget(btn, 0, Qt.AlignCenter)
 
-        lay.addWidget(make_label('Supports MP3, WAV, M4A  •  Max file size: 50 MB',
+        lay.addWidget(make_label('Supports MP3, WAV, M4A, MP4  •  Max file size: 100 MB',
                                  size=12, color=C['slate_500'], align=Qt.AlignHCenter))
-
     def _open_dialog(self):
         path, _ = QFileDialog.getOpenFileName(
             self, 'Select Audio File', '',
@@ -467,6 +472,16 @@ class RehearsalChatPage(QWidget):
         self._poll_timer = None
         self._polling = False
         self._current_pdf_path = None
+        self._view_token = 0
+        self._upload_zone = None
+        self._has_attempts = False
+        self._session = {}
+        self._settings_prompt_widget = None
+        self._settings_prompt_signature = None
+        self._settings_busy = False
+        self._scroll_request_id = 0
+        self._pending_open_scroll_widget = None
+        self._pending_open_scroll_to_bottom = False
         self._build()
 
     def _build(self):
@@ -522,10 +537,18 @@ class RehearsalChatPage(QWidget):
         title_col.addWidget(self.header_title)
         title_col.addWidget(self.header_sub)
 
+        self.btn_edit_settings = QPushButton('Edit settings')
+        self.btn_edit_settings.setStyleSheet(BTN_OUTLINE_SM)
+        self.btn_edit_settings.setFixedHeight(32)
+        self.btn_edit_settings.setCursor(Qt.PointingHandCursor)
+        self.btn_edit_settings.setEnabled(False)
+        self.btn_edit_settings.clicked.connect(self._open_settings_dialog)
+
         h_lay.addWidget(btn_back)
         h_lay.addWidget(divider)
         h_lay.addLayout(title_col)
         h_lay.addStretch()
+        h_lay.addWidget(self.btn_edit_settings)
 
         root.addWidget(self.header)
 
@@ -558,6 +581,7 @@ class RehearsalChatPage(QWidget):
         self.chat_layout.addLayout(h_wrap)
 
         self.scroll.setWidget(self.chat_widget)
+        self.scroll.verticalScrollBar().rangeChanged.connect(self._on_open_scroll_range_changed)
         root.addWidget(self.scroll, 1)
 
         # Default: empty state
@@ -565,22 +589,403 @@ class RehearsalChatPage(QWidget):
 
     # ── Navigation / data loading ──────────────────────────────────
     def load_data(self, data: dict):
+        self._view_token += 1
         self._reset_all()
-        self._config = data
-        self._session_id = data.get('sessionId') or data.get('session', {}).get('sessionId')
+        self._config = data or {}
+        self._session = dict(self._config.get('session') or {})
+        self._session_id = self._config.get('sessionId') or self._config.get('session', {}).get('sessionId')
+        self.btn_edit_settings.setEnabled(bool(self._session_id))
+        self.btn_edit_settings.setText('Edit settings')
 
-        if data.get('is_new') or self._session_id:
-            self.header_title.setText(data.get('title', 'New Rehearsal'))
-            self.header_sub.setText(data.get('goal', ''))
-            self._show_empty_state()
-        else:
-            rehearsal = data.get('rehearsal', {})
-            self.header_title.setText(rehearsal.get('title', 'Rehearsal Session'))
-            self.header_sub.setText(rehearsal.get('scenario', ''))
-            self._load_existing(rehearsal)
+        if self._session_id:
+            self._apply_session_header(self._session or {
+                'title': self._config.get('title', 'Rehearsal Session'),
+                'goal': self._config.get('goal', ''),
+                'scenario': self._config.get('goal', ''),
+            })
+            self._restore_backend_session(self._view_token)
+            return
+
+        rehearsal = self._config.get('rehearsal', {})
+        self.header_title.setText(rehearsal.get('title', 'Rehearsal Session'))
+        self.header_sub.setText(rehearsal.get('scenario', ''))
+        self.btn_edit_settings.setEnabled(False)
+        self._load_existing(rehearsal)
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        if self._pending_open_scroll_to_bottom or self._pending_open_scroll_widget is not None:
+            self._apply_open_scroll_position(self._pending_open_scroll_widget)
+
+    def _on_open_scroll_range_changed(self, _minimum, _maximum):
+        if self._pending_open_scroll_to_bottom or self._pending_open_scroll_widget is not None:
+            self._apply_open_scroll_position(self._pending_open_scroll_widget)
+
+    def _set_settings_busy(self, busy: bool):
+        self._settings_busy = busy
+        self.btn_edit_settings.setEnabled(bool(self._session_id) and not busy)
+        self.btn_edit_settings.setText('Saving...' if busy else 'Edit settings')
+
+    def _open_settings_dialog(self):
+        if not self._session_id or self._settings_busy:
+            return
+
+        dialog = SessionSettingsDialog(self, self._session or {
+            'title': self.header_title.text(),
+            'goal': self.header_sub.text(),
+        })
+        if dialog.exec_() != dialog.Accepted:
+            return
+
+        self._set_settings_busy(True)
+        session_id = self._session_id
+        self._start_session_worker(
+            session_id,
+            lambda: api.update_session(session_id, dialog.payload()),
+            self._settings_updated,
+            self._settings_update_failed,
+        )
+
+    def _settings_updated(self, session: dict):
+        self._set_settings_busy(False)
+        self._session = dict(session or {})
+        self._config['session'] = dict(self._session)
+        self._config['title'] = self._session.get('title') or self._config.get('title', '')
+        self._config['goal'] = self._session.get('goal') or self._config.get('goal', '')
+        self._apply_session_header(self._session)
+        self._ensure_settings_prompt_visible()
+        show_toast(self, 'Project settings updated.', 'success')
+
+    def _settings_update_failed(self, message: str):
+        self._set_settings_busy(False)
+        show_toast(self, message, 'error')
 
     def _go_back(self):
         self.navigate.emit('dashboard', {'refresh': True})
+
+    def _guarded_callback(self, token, callback):
+        def wrapped(*args):
+            if token != self._view_token:
+                return
+            callback(*args)
+        return wrapped
+
+    def _guarded_session_callback(self, session_id, callback):
+        expected_session_id = str(session_id or '')
+
+        def wrapped(*args):
+            if expected_session_id != str(self._session_id or ''):
+                return
+            callback(*args)
+        return wrapped
+
+    def _start_worker(self, fn, on_success, on_failure=None, token=None):
+        view_token = self._view_token if token is None else token
+        worker = ApiWorker(fn, self)
+        worker.succeeded.connect(self._guarded_callback(view_token, on_success))
+        if on_failure is None:
+            on_failure = self._pipeline_failed
+        worker.failed.connect(self._guarded_callback(view_token, on_failure))
+        worker.finished.connect(lambda: self._forget_worker(worker))
+        self._workers.append(worker)
+        worker.start()
+        return worker
+
+    def _start_session_worker(self, session_id, fn, on_success, on_failure=None):
+        worker = ApiWorker(fn, self)
+        worker.succeeded.connect(self._guarded_session_callback(session_id, on_success))
+        if on_failure is None:
+            on_failure = self._pipeline_failed
+        worker.failed.connect(self._guarded_session_callback(session_id, on_failure))
+        worker.finished.connect(lambda: self._forget_worker(worker))
+        self._workers.append(worker)
+        worker.start()
+        return worker
+
+    def _clear_inner_layout(self):
+        self._upload_zone = None
+        self._settings_prompt_widget = None
+        self._settings_prompt_signature = None
+        while self.inner_lay.count():
+            item = self.inner_lay.takeAt(0)
+            if item.widget():
+                item.widget().deleteLater()
+
+    def _remove_trailing_spacers(self):
+        while self.inner_lay.count():
+            last_index = self.inner_lay.count() - 1
+            item = self.inner_lay.itemAt(last_index)
+            if not item or not item.spacerItem():
+                return
+            self.inner_lay.takeAt(last_index)
+
+    def _remove_upload_zone(self):
+        if self._upload_zone is not None:
+            self.inner_lay.removeWidget(self._upload_zone)
+            self._upload_zone.deleteLater()
+            self._upload_zone = None
+        self._remove_trailing_spacers()
+
+    def _append_content_widget(self, widget, before_upload_zone=False):
+        if before_upload_zone and self._upload_zone is not None:
+            index = self.inner_lay.indexOf(self._upload_zone)
+            if index >= 0:
+                self.inner_lay.insertWidget(index, widget)
+                return
+
+        index = self.inner_lay.count()
+        if index > 0 and self.inner_lay.itemAt(index - 1).spacerItem():
+            index -= 1
+        self.inner_lay.insertWidget(index, widget)
+
+    def _add_upload_zone(self):
+        self._remove_upload_zone()
+        upload_zone = UploadZone()
+        upload_zone.file_selected.connect(self._on_file_selected)
+        self._upload_zone = upload_zone
+        self.inner_lay.addWidget(upload_zone)
+        self.inner_lay.addStretch()
+
+    def _add_user_message(self, text: str, *, scroll=True, before_upload_zone=False):
+        user_row = QHBoxLayout()
+        user_row.addStretch()
+        user_row.addWidget(ChatBubbleUser(text))
+        user_widget = QWidget()
+        user_widget.setStyleSheet('background: transparent;')
+        user_widget.setLayout(user_row)
+        self._append_content_widget(user_widget, before_upload_zone=before_upload_zone)
+        if scroll:
+            self._request_scroll_to_bottom()
+        return user_widget
+
+    def _add_ai_message(self, text: str):
+        ai_row = QHBoxLayout()
+        ai_icon = QLabel('âœ¦')
+        ai_icon.setFixedSize(32, 32)
+        ai_icon.setAlignment(Qt.AlignCenter)
+        ai_icon.setStyleSheet(f"""
+            background: {C['indigo_100']};
+            border-radius: 8px;
+            font-size: 15px;
+            color: {C['indigo_600']};
+            border: none;
+        """)
+        ai_row.addWidget(ai_icon, 0, Qt.AlignTop)
+        ai_row.addWidget(ChatBubbleAI(text))
+        ai_row.addStretch()
+        ai_w = QWidget()
+        ai_w.setStyleSheet('background: transparent;')
+        ai_w.setLayout(ai_row)
+        self.inner_lay.addWidget(ai_w)
+
+    def _apply_session_header(self, session: dict):
+        self.header_title.setText(session.get('title') or 'Rehearsal Session')
+        self.header_sub.setText(session.get('goal') or session.get('scenario') or '')
+
+    def _ensure_settings_prompt_visible(self, *, scroll=False):
+        prompt_text = session_prompt_text(self._session)
+        if not prompt_text:
+            return
+
+        self._settings_prompt_signature = session_prompt_signature(self._session)
+        if self._settings_prompt_widget is not None:
+            self.inner_lay.removeWidget(self._settings_prompt_widget)
+            self._settings_prompt_widget.deleteLater()
+            self._settings_prompt_widget = None
+
+        self._settings_prompt_widget = self._add_user_message(
+            prompt_text,
+            scroll=scroll,
+            before_upload_zone=True,
+        )
+
+    def _show_session_ready_state(self):
+        self._clear_inner_layout()
+        self._has_attempts = False
+        self._add_upload_zone()
+        self._ensure_settings_prompt_visible()
+
+    def _add_report_widget(self, report_data: dict, report_id: str):
+        report = ReportWidget(
+            report_data,
+            lambda report_id=report_id: self._on_download_pdf(report_id),
+        )
+        self.inner_lay.addWidget(report)
+        return report
+
+    def _show_status_state(self, title: str, body: str):
+        self._clear_inner_layout()
+        wrapper = QWidget()
+        wrapper.setStyleSheet('background: transparent;')
+        layout = QVBoxLayout(wrapper)
+        layout.setSpacing(10)
+        layout.setAlignment(Qt.AlignCenter)
+
+        icon_lbl = QLabel('âœ¦')
+        icon_lbl.setAlignment(Qt.AlignCenter)
+        icon_lbl.setFixedSize(64, 64)
+        icon_lbl.setStyleSheet(f"""
+            background: {C['indigo_100']};
+            border-radius: 16px;
+            font-size: 30px;
+            color: {C['indigo_600']};
+            border: none;
+        """)
+        layout.addWidget(icon_lbl, 0, Qt.AlignCenter)
+        layout.addWidget(make_label(title, size=20, weight=QFont.DemiBold,
+                                    color=C['slate_900'], align=Qt.AlignHCenter))
+        layout.addWidget(make_label(body, size=14, color=C['slate_600'],
+                                    align=Qt.AlignHCenter, wrap=True))
+        self._add_to_chat(wrapper)
+        self.inner_lay.addStretch()
+
+    def _restore_backend_session(self, token: int):
+        self._show_status_state(
+            'Loading rehearsal status',
+            'Checking uploads, analysis jobs, and report data for this session.',
+        )
+        self._start_worker(
+            lambda: self._fetch_backend_session_state(self._session_id),
+            self._restore_backend_session_loaded,
+            self._restore_backend_session_failed,
+            token=token,
+        )
+
+    def _fetch_backend_session_state(self, session_id: str) -> dict:
+        return {
+            'session': api.get_session(session_id),
+            'uploads': api.list_uploads(session_id),
+            'jobs': api.list_jobs(session_id),
+            'reports': api.list_reports(session_id),
+        }
+
+    def _restore_backend_session_loaded(self, payload: dict):
+        if self._state in ('uploading', 'processing'):
+            return
+
+        session = payload.get('session') or {}
+        self._session = dict(session)
+        attempts = self._build_attempts(
+            payload.get('uploads') or [],
+            payload.get('jobs') or [],
+            payload.get('reports') or [],
+        )
+        active_job_id = self._find_latest_active_job_id(attempts)
+
+        self._apply_session_header(session or {
+            'title': self.header_title.text() or 'Rehearsal Session',
+            'goal': self.header_sub.text(),
+            'scenario': self.header_sub.text(),
+        })
+
+        if not attempts:
+            self._show_session_ready_state()
+            return
+
+        self._cancel_pending_scroll()
+        self.setUpdatesEnabled(False)
+        try:
+            self._clear_inner_layout()
+            self._has_attempts = False
+
+            for attempt in attempts:
+                upload = attempt.get('upload') or {}
+                job = attempt.get('job') or {}
+                report = attempt.get('report') or {}
+                self._render_uploaded_bubble(upload, scroll=False)
+
+                if report:
+                    report_id = str(report.get('reportId') or '')
+                    self._report_id = report_id or self._report_id
+                    self._add_ai_message('Analysis complete! Here\'s your detailed feedback report:')
+                    self._add_report_widget(self._map_report(report), report_id)
+                    continue
+
+                if not job:
+                    self._add_ai_message('Audio uploaded. You can continue this project by adding another recording.')
+                    continue
+
+                state = str(job.get('status', '')).upper()
+                if self._is_failed_state(state):
+                    self._add_ai_message(job.get('errorMessage') or 'Analysis failed for this recording.')
+                    continue
+
+                if self._is_completed_state(state):
+                    self._add_ai_message('Analysis finished, but the report is not available yet.')
+                    continue
+
+                if str(job.get('jobId') or '') == active_job_id:
+                    self._job_id = active_job_id
+                    self._start_processing()
+                else:
+                    self._add_ai_message('Analysis is still running for this recording.')
+
+            if active_job_id:
+                self._start_polling()
+                self._apply_open_scroll_position()
+                return
+
+            self._state = 'idle'
+            self._add_upload_zone()
+            self._ensure_settings_prompt_visible()
+            self._apply_open_scroll_position()
+        finally:
+            if not self._pending_open_scroll_to_bottom and self._pending_open_scroll_widget is None:
+                self.setUpdatesEnabled(True)
+                self.update()
+
+    def _restore_backend_session_failed(self, message: str):
+        if self._state in ('uploading', 'processing'):
+            return
+        self._show_empty_state()
+        show_toast(self, message, 'error')
+
+    def _render_uploaded_bubble(self, upload: dict, scroll=True):
+        filename = upload.get('originalFilename') or 'audio file'
+        size_str = self._fmt_size(int(upload.get('sizeBytes') or 0))
+        self._has_attempts = True
+        self._add_user_message(f'Uploaded: {filename} ({size_str})', scroll=scroll)
+
+    def _build_attempts(self, uploads: list, jobs: list, reports: list) -> list[dict]:
+        jobs_by_upload = defaultdict(list)
+        for job in jobs:
+            jobs_by_upload[str(job.get('uploadId') or '')].append(job)
+
+        reports_by_job = {
+            str(report.get('jobId') or ''): report
+            for report in reports
+        }
+
+        attempts = []
+        for upload in sorted(uploads, key=lambda item: str(item.get('createdAt') or '')):
+            upload_id = str(upload.get('uploadId') or '')
+            upload_jobs = sorted(jobs_by_upload.get(upload_id, []), key=lambda item: str(item.get('createdAt') or ''))
+            latest_job = upload_jobs[-1] if upload_jobs else {}
+            report = reports_by_job.get(str(latest_job.get('jobId') or ''), {})
+            attempts.append({
+                'upload': upload,
+                'job': latest_job,
+                'report': report,
+            })
+        return attempts
+
+    @staticmethod
+    def _find_latest_active_job_id(attempts: list[dict]) -> str:
+        for attempt in reversed(attempts):
+            job = attempt.get('job') or {}
+            report = attempt.get('report') or {}
+            state = str(job.get('status', '')).upper()
+            if job and not report and state and state not in ('DONE', 'COMPLETED', 'SUCCESS', 'FAILED', 'ERROR'):
+                return str(job.get('jobId') or '')
+        return ''
+
+    @staticmethod
+    def _is_completed_state(state: str) -> bool:
+        return state in ('DONE', 'COMPLETED', 'SUCCESS')
+
+    @staticmethod
+    def _is_failed_state(state: str) -> bool:
+        return state in ('FAILED', 'ERROR')
 
     # ── State management ───────────────────────────────────────────
     def _reset_all(self):
@@ -591,27 +996,96 @@ class RehearsalChatPage(QWidget):
             self._spin_timer.stop()
         if hasattr(self, '_prog_timer') and self._prog_timer is not None:
             self._prog_timer.stop()
-        # Remove all widgets from inner_lay
-        while self.inner_lay.count():
-            item = self.inner_lay.takeAt(0)
-            if item.widget():
-                item.widget().deleteLater()
+        self._clear_inner_layout()
         self._state = 'idle'
         self._progress = 0
         self._job_id = None
         self._report_id = None
         self._polling = False
         self._current_pdf_path = None
+        self._proc_card = None
+        self._prog_card = None
+        self._prog_bar = None
+        self._prog_lbl = None
+        self._upload_zone = None
+        self._has_attempts = False
+        self._session = {}
+        self._settings_prompt_widget = None
+        self._settings_prompt_signature = None
+        self._set_settings_busy(False)
+        self._pending_open_scroll_widget = None
+        self._pending_open_scroll_to_bottom = False
+        self._cancel_pending_scroll()
+
+    def _cancel_pending_scroll(self):
+        self._scroll_request_id += 1
+
+    def _run_requested_scroll(self, request_id: int, callback):
+        if request_id != self._scroll_request_id:
+            return
+        callback()
+
+    def _request_scroll(self, callback):
+        self._scroll_request_id += 1
+        request_id = self._scroll_request_id
+        QTimer.singleShot(
+            0,
+            lambda request_id=request_id, callback=callback: self._run_requested_scroll(request_id, callback)
+        )
+
+    def _scroll_to_bottom(self):
+        bar = self.scroll.verticalScrollBar()
+        bar.setValue(bar.maximum())
+
+    def _request_scroll_to_bottom(self):
+        self._request_scroll(self._scroll_to_bottom)
+
+    def _scroll_to_widget_top(self, widget, margin=16):
+        if widget is None:
+            return
+        bar = self.scroll.verticalScrollBar()
+        target_y = widget.mapTo(self.chat_widget, QPoint(0, 0)).y()
+        bar.setValue(max(0, target_y - margin))
+
+    def _request_scroll_to_widget_top(self, widget):
+        if widget is None:
+            return
+        self._request_scroll(lambda widget=widget: self._scroll_to_widget_top(widget))
+
+    def _open_scroll_waits_for_range(self) -> bool:
+        content_height = max(self.chat_widget.sizeHint().height(), self.inner.sizeHint().height())
+        viewport_height = self.scroll.viewport().height()
+        return content_height > viewport_height and self.scroll.verticalScrollBar().maximum() <= 0
+
+    def _apply_open_scroll_position(self, widget=None):
+        self.chat_layout.activate()
+        self.inner_lay.activate()
+        self.chat_widget.adjustSize()
+        self.inner.adjustSize()
+        self._pending_open_scroll_widget = widget
+        self._pending_open_scroll_to_bottom = widget is None
+        if not self.isVisible():
+            return
+        if widget is None and self._open_scroll_waits_for_range():
+            return
+        self._pending_open_scroll_widget = None
+        self._pending_open_scroll_to_bottom = False
+        if widget is not None:
+            self._scroll_to_widget_top(widget)
+        else:
+            self._scroll_to_bottom()
+        if not self.updatesEnabled():
+            self.setUpdatesEnabled(True)
+            self.update()
 
     def _add_to_chat(self, widget):
         self.inner_lay.addWidget(widget)
-        # Scroll to bottom
-        QTimer.singleShot(50, lambda: self.scroll.verticalScrollBar().setValue(
-            self.scroll.verticalScrollBar().maximum()
-        ))
+        self._request_scroll_to_bottom()
 
     # ── Empty state ────────────────────────────────────────────────
     def _show_empty_state(self):
+        self._clear_inner_layout()
+        self._has_attempts = False
         wrapper = QWidget()
         wrapper.setStyleSheet('background: transparent;')
         w_lay = QVBoxLayout(wrapper)
@@ -637,12 +1111,7 @@ class RehearsalChatPage(QWidget):
             size=14, color=C['slate_600'], align=Qt.AlignHCenter, wrap=True
         ))
         self._add_to_chat(wrapper)
-
-        # Upload zone
-        upload_zone = UploadZone()
-        upload_zone.file_selected.connect(self._on_file_selected)
-        self.inner_lay.addWidget(upload_zone)
-        self.inner_lay.addStretch()
+        self._add_upload_zone()
 
     # ── File upload simulation ─────────────────────────────────────
     def _on_file_selected(self, path: str):
@@ -650,13 +1119,13 @@ class RehearsalChatPage(QWidget):
             return
 
         ext = os.path.splitext(path)[1].lower()
-        if ext not in ('.mp3', '.wav', '.m4a', '.mp4'):
-            show_toast(self, 'Please upload a valid audio file (MP3, WAV, M4A)', 'error')
+        if ext not in ALLOWED_AUDIO_EXTENSIONS:
+            show_toast(self, 'Please upload a valid audio file (MP3, WAV, M4A, MP4)', 'error')
             return
 
         size = os.path.getsize(path)
-        if size > 50 * 1024 * 1024:
-            show_toast(self, 'File size must be less than 50 MB', 'error')
+        if size > MAX_UPLOAD_SIZE_BYTES:
+            show_toast(self, f'File size must be less than {MAX_UPLOAD_SIZE_MB} MB', 'error')
             return
 
         if not self._session_id:
@@ -664,23 +1133,20 @@ class RehearsalChatPage(QWidget):
             return
 
         self._state = 'uploading'
+        session_id = self._session_id
 
-        # Clear inner layout
-        while self.inner_lay.count():
-            item = self.inner_lay.takeAt(0)
-            if item.widget():
-                item.widget().deleteLater()
+        if self._has_attempts or self._settings_prompt_widget is not None:
+            self._remove_upload_zone()
+        else:
+            self._clear_inner_layout()
 
         # User bubble
         filename = os.path.basename(path)
         size_str = self._fmt_size(size)
-        user_row = QHBoxLayout()
-        user_row.addStretch()
-        user_row.addWidget(ChatBubbleUser(f'Uploaded: {filename} ({size_str})'))
-        user_w = QWidget()
-        user_w.setStyleSheet('background: transparent;')
-        user_w.setLayout(user_row)
-        self.inner_lay.addWidget(user_w)
+        self._render_uploaded_bubble({
+            'originalFilename': filename,
+            'sizeBytes': size,
+        })
 
         # Upload progress card
         self._prog_card = self._make_progress_card(filename, size_str)
@@ -688,12 +1154,11 @@ class RehearsalChatPage(QWidget):
         self.inner_lay.addStretch()
 
         self._set_upload_progress(10, 'Uploading to backend...')
-        worker = ApiWorker(lambda: api.upload_audio(self._session_id, path), self)
-        worker.succeeded.connect(self._upload_done)
-        worker.failed.connect(self._pipeline_failed)
-        worker.finished.connect(lambda: self._forget_worker(worker))
-        self._workers.append(worker)
-        worker.start()
+        self._start_session_worker(
+            session_id,
+            lambda: api.upload_audio(session_id, path),
+            self._upload_done,
+        )
 
     def _make_progress_card(self, filename, size_str):
         card = Card(radius=16)
@@ -753,12 +1218,12 @@ class RehearsalChatPage(QWidget):
         if not upload_id:
             self._pipeline_failed('Backend did not return uploadId.')
             return
-        worker = ApiWorker(lambda: api.create_job(self._session_id, str(upload_id)), self)
-        worker.succeeded.connect(self._job_created)
-        worker.failed.connect(self._pipeline_failed)
-        worker.finished.connect(lambda: self._forget_worker(worker))
-        self._workers.append(worker)
-        worker.start()
+        session_id = self._session_id
+        self._start_session_worker(
+            session_id,
+            lambda: api.create_job(session_id, str(upload_id)),
+            self._job_created,
+        )
 
     def _job_created(self, job: dict):
         self._job_id = str(job.get('jobId', ''))
@@ -778,12 +1243,7 @@ class RehearsalChatPage(QWidget):
             self._prog_card = None
             self._prog_bar = None
             self._prog_lbl = None
-        # Remove stretch
-        while self.inner_lay.count():
-            item = self.inner_lay.itemAt(self.inner_lay.count() - 1)
-            if item and item.spacerItem():
-                self.inner_lay.removeItem(item)
-                break
+        self._remove_trailing_spacers()
 
         # AI typing bubble
         ai_row = QHBoxLayout()
@@ -863,9 +1323,10 @@ class RehearsalChatPage(QWidget):
         if self._polling or not self._job_id:
             return
         self._polling = True
+        session_id = self._session_id
         worker = ApiWorker(lambda: api.get_job(self._job_id), self)
-        worker.succeeded.connect(self._job_status_loaded)
-        worker.failed.connect(self._pipeline_failed)
+        worker.succeeded.connect(self._guarded_session_callback(session_id, self._job_status_loaded))
+        worker.failed.connect(self._guarded_session_callback(session_id, self._pipeline_failed))
         worker.finished.connect(lambda: self._poll_finished(worker))
         self._workers.append(worker)
         worker.start()
@@ -889,35 +1350,43 @@ class RehearsalChatPage(QWidget):
             return
 
         report_id = status.get('reportId')
-        if state in ('DONE', 'COMPLETED', 'SUCCESS') and report_id:
+        if self._is_completed_state(state) and report_id:
             if self._poll_timer is not None:
                 self._poll_timer.stop()
             self._report_id = str(report_id)
-            worker = ApiWorker(lambda: api.get_report(self._report_id), self)
-            worker.succeeded.connect(self._report_loaded)
-            worker.failed.connect(self._pipeline_failed)
-            worker.finished.connect(lambda: self._forget_worker(worker))
-            self._workers.append(worker)
-            worker.start()
+            self._start_session_worker(
+                self._session_id,
+                lambda: api.get_report(self._report_id),
+                self._report_loaded,
+            )
 
     def _report_loaded(self, report: dict):
         self._report_id = str(report.get('reportId') or self._report_id or '')
-        self._complete_analysis(self._map_report(report))
+        self._complete_analysis(self._map_report(report), report_id=self._report_id)
 
     # ── Analysis complete ──────────────────────────────────────────
-    def _complete_analysis(self, report_data=None):
+    def _complete_analysis(self, report_data=None, show_success_toast=True, report_id=None):
         if hasattr(self, '_spin_timer') and self._spin_timer is not None:
             self._spin_timer.stop()
         self._state = 'success'
         if hasattr(self, '_proc_card') and self._proc_card is not None:
             self._proc_card.deleteLater()
+            self._proc_card = None
 
-        # Remove stretch
-        while self.inner_lay.count():
-            item = self.inner_lay.itemAt(self.inner_lay.count() - 1)
-            if item and item.spacerItem():
-                self.inner_lay.removeItem(item)
-                break
+        self._remove_trailing_spacers()
+        resolved_report_id = str(report_id or self._report_id or '')
+        self._report_id = resolved_report_id or self._report_id
+        self._add_ai_message('Analysis complete! Here\'s your detailed feedback report:')
+        report_widget = self._add_report_widget(report_data or MOCK_REPORT, resolved_report_id)
+        self._state = 'idle'
+        self._add_upload_zone()
+        self._ensure_settings_prompt_visible()
+
+        if show_success_toast:
+            show_toast(self, 'Analysis complete!', 'success')
+
+        self._request_scroll_to_widget_top(report_widget)
+        return
 
         # AI complete message
         ai_row = QHBoxLayout()
@@ -944,7 +1413,8 @@ class RehearsalChatPage(QWidget):
         self.inner_lay.addWidget(report)
         self.inner_lay.addStretch()
 
-        show_toast(self, 'Analysis complete!', 'success')
+        if show_success_toast:
+            show_toast(self, 'Analysis complete!', 'success')
 
         QTimer.singleShot(100, lambda: self.scroll.verticalScrollBar().setValue(
             self.scroll.verticalScrollBar().maximum()
@@ -993,6 +1463,7 @@ class RehearsalChatPage(QWidget):
         self.inner_lay.addWidget(report)
         self.inner_lay.addStretch()
         self._state = 'success'
+        self._apply_open_scroll_position()
 
     # ── Helpers ────────────────────────────────────────────────────
     @staticmethod
@@ -1035,28 +1506,44 @@ class RehearsalChatPage(QWidget):
             self._poll_timer.stop()
         if hasattr(self, '_spin_timer') and self._spin_timer is not None:
             self._spin_timer.stop()
+        if getattr(self, '_proc_card', None) is not None:
+            self._proc_card.deleteLater()
+            self._proc_card = None
+        if getattr(self, '_prog_card', None) is not None:
+            self._prog_card.deleteLater()
+            self._prog_card = None
+            self._prog_bar = None
+            self._prog_lbl = None
+        self._remove_upload_zone()
+        self._remove_trailing_spacers()
+        self._add_ai_message(message)
+        self._state = 'idle'
+        if self._session_id:
+            self._add_upload_zone()
+            self._ensure_settings_prompt_visible()
         show_toast(self, message, 'error')
 
     def _forget_worker(self, worker):
         if worker in self._workers:
             self._workers.remove(worker)
 
-    def _on_download_pdf(self):
-        if not self._report_id:
-            show_toast(self, 'PDF report downloaded successfully', 'success')
+    def _on_download_pdf(self, report_id=None):
+        resolved_report_id = str(report_id or self._report_id or '')
+        if not resolved_report_id:
+            show_toast(self, 'Report PDF is not available for this item.', 'error')
             return
 
         path, _ = QFileDialog.getSaveFileName(
             self,
             'Save PDF Report',
-            f'speechgym-report-{self._report_id}.pdf',
+            f'speechgym-report-{resolved_report_id}.pdf',
             'PDF Files (*.pdf);;All Files (*)',
         )
         if not path:
             return
 
         self._current_pdf_path = path
-        worker = ApiWorker(lambda: api.download_pdf(self._report_id), self)
+        worker = ApiWorker(lambda: api.download_pdf(resolved_report_id), self)
         worker.succeeded.connect(self._pdf_downloaded)
         worker.failed.connect(lambda message: show_toast(self, message, 'error'))
         worker.finished.connect(lambda: self._forget_worker(worker))

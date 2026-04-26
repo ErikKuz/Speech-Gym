@@ -84,3 +84,6 @@ app:
     health-path: /health
     connect-timeout: PT5S
     read-timeout: PT10M
+    max-attempts: 5
+    initial-backoff: PT2S
+    max-backoff: PT15S

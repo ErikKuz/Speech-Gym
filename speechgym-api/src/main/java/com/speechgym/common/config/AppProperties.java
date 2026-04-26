@@ -52,7 +52,10 @@ public record AppProperties(
         String transcribePath,
         String healthPath,
         Duration connectTimeout,
-        Duration readTimeout
+        Duration readTimeout,
+        int maxAttempts,
+        Duration initialBackoff,
+        Duration maxBackoff
     ) {
     }
 }
