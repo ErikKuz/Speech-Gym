@@ -19,6 +19,7 @@ class SignUpPage(QWidget):
         super().__init__()
         self._workers = []
         self.setObjectName('SignUpPage')
+        self.setAttribute(Qt.WA_StyledBackground, True)
         self.setStyleSheet(f"""
             QWidget#SignUpPage {{
                 background: qlineargradient(
