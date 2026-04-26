@@ -18,12 +18,13 @@ class Card(QFrame):
     _uid = 0
 
     def __init__(self, parent=None, radius=16, shadow=True,
-                 border_color=None, bg='white'):
+                 border_color=None, bg=None):
         super().__init__(parent)
         Card._uid += 1
         name = f'Card{Card._uid}'
         self.setObjectName(name)
         bc = border_color or C['slate_200']
+        bg = bg or C['white']
         self.setStyleSheet(f"""
             QFrame#{name} {{
                 background-color: {bg};
@@ -46,10 +47,12 @@ class AvatarLabel(QWidget):
     """Circular avatar showing initials."""
 
     def __init__(self, initials='?', size=48,
-                 bg=C['indigo_100'], fg=C['indigo_700'],
-                 border=C['indigo_200'], parent=None):
+                 bg=None, fg=None, border=None, parent=None):
         super().__init__(parent)
         self.initials = initials
+        bg = bg or C['indigo_100']
+        fg = fg or C['indigo_700']
+        border = border or C['indigo_200']
         self._bg = QColor(bg)
         self._fg = QColor(fg)
         self._border = QColor(border)
@@ -75,10 +78,12 @@ class AvatarLabel(QWidget):
 class IconBox(QWidget):
     """Colored rounded square with a centred icon character."""
 
-    def __init__(self, icon_char, size=48, bg=C['indigo_100'],
-                 fg=C['indigo_600'], radius=12, font_size=20, parent=None):
+    def __init__(self, icon_char, size=48, bg=None,
+                 fg=None, radius=12, font_size=20, parent=None):
         super().__init__(parent)
         self.icon_char = icon_char
+        bg = bg or C['indigo_100']
+        fg = fg or C['indigo_600']
         self._bg = QColor(bg)
         self._fg = QColor(fg)
         self._radius = radius
@@ -268,8 +273,9 @@ class BadgePill(QWidget):
 # ─────────────────────────────────────────────
 #  Label helpers
 # ─────────────────────────────────────────────
-def make_label(text, size=14, weight=QFont.Normal, color=C['slate_900'],
+def make_label(text, size=14, weight=QFont.Normal, color=None,
                wrap=False, align=Qt.AlignLeft):
+    color = color or C['slate_900']
     lbl = QLabel(text)
     lbl.setStyleSheet(
         f"font-size: {size}px; color: {color}; background: transparent; border: none;"

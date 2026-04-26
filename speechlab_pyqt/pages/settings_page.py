@@ -9,7 +9,7 @@ from PyQt5.QtCore import Qt, pyqtSignal, QTimer
 from PyQt5.QtGui import QFont
 
 from styles import (C, BTN_PRIMARY, BTN_OUTLINE, BTN_OUTLINE_SM,
-                    BTN_GHOST_SM, BTN_DANGER_OUTLINE, BTN_DANGER,
+                    BTN_DANGER_OUTLINE, BTN_DANGER,
                     INPUT_STYLE, TEXTAREA_STYLE, COMBOBOX_STYLE, SCROLLBAR_STYLE)
 from widgets import Card, AvatarLabel, Separator, Switch, make_label, show_toast
 
@@ -20,7 +20,7 @@ class ConfirmDeleteDialog(QDialog):
         self.setWindowTitle('Confirm Deletion')
         self.setFixedWidth(440)
         self.setModal(True)
-        self.setStyleSheet('background: white;')
+        self.setStyleSheet(f"background: {C['white']};")
 
         lay = QVBoxLayout(self)
         lay.setContentsMargins(28, 28, 28, 20)
@@ -65,8 +65,20 @@ class SettingsPage(QWidget):
             'practiceReminders': False,
             'productUpdates': True,
         }
+        self._theme_dark = False
         self._saving = False
         self._build()
+
+    def load_data(self, data: dict):
+        if not isinstance(data, dict):
+            return
+        theme_name = str(data.get('theme', '')).strip().lower()
+        if theme_name in ('light', 'dark'):
+            self._theme_dark = theme_name == 'dark'
+            if hasattr(self, 'theme_switch'):
+                self.theme_switch.blockSignals(True)
+                self.theme_switch.setChecked(self._theme_dark)
+                self.theme_switch.blockSignals(False)
 
     def _build(self):
         root = QVBoxLayout(self)
@@ -77,14 +89,32 @@ class SettingsPage(QWidget):
         header = QFrame()
         header.setFixedHeight(58)
         header.setStyleSheet(
-            f'background: white; border-bottom: 1px solid {C["slate_200"]};'
+            f'background: {C["white"]}; border-bottom: 1px solid {C["slate_200"]};'
         )
         h_lay = QHBoxLayout(header)
         h_lay.setContentsMargins(24, 0, 24, 0)
         h_lay.setSpacing(12)
 
         btn_back = QPushButton('← Back to Dashboard')
-        btn_back.setStyleSheet(BTN_GHOST_SM)
+        btn_back.setStyleSheet(f"""
+            QPushButton {{
+                background: {C['slate_100']};
+                color: {C['slate_800']};
+                border: 1px solid {C['slate_200']};
+                border-radius: 8px;
+                padding: 6px 12px;
+                font-size: 13px;
+                font-weight: 600;
+                text-align: left;
+            }}
+            QPushButton:hover {{
+                background: {C['slate_200']};
+                border-color: {C['slate_300']};
+            }}
+            QPushButton:pressed {{
+                background: {C['slate_300']};
+            }}
+        """)
         btn_back.setFixedHeight(32)
         btn_back.setCursor(Qt.PointingHandCursor)
         btn_back.clicked.connect(lambda: self.navigate.emit('dashboard', None))
@@ -122,9 +152,8 @@ class SettingsPage(QWidget):
         il.setSpacing(28)
 
         il.addWidget(self._build_profile_section())
-        il.addWidget(self._build_notifications_section())
+        il.addWidget(self._build_theme_section())
         il.addWidget(self._build_security_section())
-        il.addWidget(self._build_billing_section())
         il.addWidget(self._build_danger_section())
 
         h_wrap = QHBoxLayout()
@@ -227,6 +256,49 @@ class SettingsPage(QWidget):
         self.btn_save_profile.setCursor(Qt.PointingHandCursor)
         self.btn_save_profile.clicked.connect(self._save_profile)
         btn_row.addWidget(self.btn_save_profile)
+        b_lay.addLayout(btn_row)
+
+        lay.addWidget(body)
+        return card
+
+    # Theme
+    def _build_theme_section(self):
+        card = Card(radius=16)
+        lay = QVBoxLayout(card)
+        lay.setContentsMargins(0, 0, 0, 0)
+        lay.setSpacing(0)
+        lay.addWidget(self._section_header('◐', 'Light/Dark Theme'))
+
+        body = QWidget()
+        body.setStyleSheet('background: transparent;')
+        b_lay = QVBoxLayout(body)
+        b_lay.setContentsMargins(32, 24, 32, 28)
+        b_lay.setSpacing(16)
+
+        row = QHBoxLayout()
+        text_col = QVBoxLayout()
+        text_col.setSpacing(4)
+        text_col.addWidget(make_label('Dark Theme', size=14, weight=QFont.Medium,
+                                      color=C['slate_900']))
+        text_col.addWidget(make_label(
+            'Switches the app appearance between light and dark modes.',
+            size=13, color=C['slate_500'], wrap=True
+        ))
+        self.theme_switch = Switch(checked=self._theme_dark)
+        self.theme_switch.toggled.connect(self._on_theme_toggled)
+        row.addLayout(text_col)
+        row.addStretch()
+        row.addWidget(self.theme_switch, 0, Qt.AlignVCenter)
+        b_lay.addLayout(row)
+
+        btn_row = QHBoxLayout()
+        btn_row.addStretch()
+        btn_apply = QPushButton('Apply Theme')
+        btn_apply.setStyleSheet(BTN_PRIMARY)
+        btn_apply.setFixedHeight(40)
+        btn_apply.setCursor(Qt.PointingHandCursor)
+        btn_apply.clicked.connect(self._apply_theme)
+        btn_row.addWidget(btn_apply)
         b_lay.addLayout(btn_row)
 
         lay.addWidget(body)
@@ -428,7 +500,7 @@ class SettingsPage(QWidget):
         card.setObjectName('DangerCard')
         card.setStyleSheet(f"""
             QFrame#DangerCard {{
-                background: white;
+                background: {C['white']};
                 border: 1px solid {C['red_200']};
                 border-radius: 16px;
             }}
@@ -488,11 +560,13 @@ class SettingsPage(QWidget):
 
     # ── Section header helper ────────────────────────────────────────
     def _section_header(self, icon_char, title_text):
+        if title_text == 'Profile':
+            title_text = 'User Data'
         header = QWidget()
         header.setObjectName('SectionHeader')
         header.setStyleSheet(f"""
             QWidget#SectionHeader {{
-                background: white;
+                background: {C['white']};
                 border-top-left-radius: 16px;
                 border-top-right-radius: 16px;
                 border-bottom: 1px solid {C['slate_200']};
@@ -518,11 +592,21 @@ class SettingsPage(QWidget):
         QTimer.singleShot(1000, lambda: (
             self.btn_save_profile.setText('💾  Save Changes'),
             self.btn_save_profile.setEnabled(True),
-            show_toast(self, 'Profile settings saved successfully', 'success'),
+            show_toast(self, 'User data updated successfully', 'success'),
         ))
 
     def _save_notifications(self):
         show_toast(self, 'Notification settings saved successfully', 'success')
+
+    def _on_theme_toggled(self, value: bool):
+        self._theme_dark = bool(value)
+
+    def _apply_theme(self):
+        target_theme = 'dark' if self._theme_dark else 'light'
+        self.navigate.emit('apply_theme', {
+            'theme': target_theme,
+            'returnPage': 'settings',
+        })
 
     def _on_delete_account(self):
         dialog = ConfirmDeleteDialog(self)

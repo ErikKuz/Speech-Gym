@@ -2,7 +2,7 @@
 
 from PyQt5.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
-    QFrame, QSizePolicy, QSpacerItem
+    QFrame, QSizePolicy
 )
 from PyQt5.QtCore import Qt, pyqtSignal
 from PyQt5.QtGui import QFont
@@ -17,13 +17,13 @@ class WelcomePage(QWidget):
     def __init__(self):
         super().__init__()
         self.setObjectName('WelcomePage')
-        self.setStyleSheet("""
-            QWidget#WelcomePage {
+        self.setStyleSheet(f"""
+            QWidget#WelcomePage {{
                 background: qlineargradient(
                     x1:0, y1:0, x2:1, y2:1,
-                    stop:0 #F8FAFC, stop:0.5 #EFF6FF, stop:1 #EEF2FF
+                    stop:0 {C['bg_grad_0']}, stop:0.5 {C['bg_grad_1']}, stop:1 {C['bg_grad_2']}
                 );
-            }
+            }}
         """)
         self._build()
 
@@ -37,13 +37,14 @@ class WelcomePage(QWidget):
         left.setSpacing(0)
 
         # Badge pill
-        badge = BadgePill('✦', 'AI-Powered Speech Coaching',
+        badge = BadgePill('✦', '',
                           bg=C['indigo_100'] + 'AA',
                           border=C['indigo_200'],
                           icon_color=C['indigo_600'],
                           text_color=C['indigo_900'])
+        badge.hide()
         left.addWidget(badge, 0, Qt.AlignLeft)
-        left.addSpacing(28)
+        left.addSpacing(0)
 
         # Hero title (rich-text label)
         title = QLabel()
@@ -72,13 +73,13 @@ class WelcomePage(QWidget):
         btn_row = QHBoxLayout()
         btn_row.setSpacing(12)
 
-        btn_start = QPushButton('Get Started Free')
+        btn_start = QPushButton('Зарегистрироваться')
         btn_start.setStyleSheet(BTN_PRIMARY_LG)
         btn_start.setFixedHeight(48)
         btn_start.setCursor(Qt.PointingHandCursor)
         btn_start.clicked.connect(lambda: self.navigate.emit('signup', None))
 
-        btn_login = QPushButton('Sign In')
+        btn_login = QPushButton('Войти')
         btn_login.setStyleSheet(BTN_OUTLINE_LG)
         btn_login.setFixedHeight(48)
         btn_login.setCursor(Qt.PointingHandCursor)
@@ -94,18 +95,14 @@ class WelcomePage(QWidget):
         sep = QFrame()
         sep.setFrameShape(QFrame.HLine)
         sep.setStyleSheet(f'color: {C["slate_200"]}; background: {C["slate_200"]};')
-        sep.setFixedHeight(1)
+        sep.setFixedHeight(0)
         left.addWidget(sep)
-        left.addSpacing(26)
+        left.addSpacing(0)
 
         # Stats row
         stats_row = QHBoxLayout()
         stats_row.setSpacing(0)
-        for i, (val, lbl_text) in enumerate([
-            ('95%', 'User satisfaction'),
-            ('10k+', 'Rehearsals analyzed'),
-            ('4.9★', 'Average rating'),
-        ]):
+        for i, (val, lbl_text) in enumerate([]):
             col = QVBoxLayout()
             col.setSpacing(4)
             v = make_label(val, size=28, weight=QFont.Bold, color=C['indigo_600'])
@@ -115,7 +112,7 @@ class WelcomePage(QWidget):
             stats_row.addLayout(col)
             if i < 2:
                 stats_row.addStretch()
-        left.addLayout(stats_row)
+        # Stats were removed from the landing requirements.
         left.addStretch()
 
         # ── RIGHT SIDE ─────────────────────────────────────────────

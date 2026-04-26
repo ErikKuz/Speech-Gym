@@ -33,7 +33,7 @@ class RehearsalItem(QFrame):
         self._data = rehearsal
         self._normal_style = f"""
             QFrame {{
-                background: white;
+                background: {C['white']};
                 border: 1px solid {C['slate_200']};
                 border-radius: 12px;
             }}
@@ -126,7 +126,7 @@ class DashboardPage(QWidget):
         sidebar = QFrame()
         sidebar.setFixedWidth(300)
         sidebar.setStyleSheet(
-            f"QFrame {{ background: white; border-right: 1px solid {C['slate_200']}; }}"
+            f"QFrame {{ background: {C['white']}; border-right: 1px solid {C['slate_200']}; }}"
         )
         sb_layout = QVBoxLayout(sidebar)
         sb_layout.setContentsMargins(0, 0, 0, 0)
@@ -135,7 +135,7 @@ class DashboardPage(QWidget):
         # User profile section
         profile_section = QWidget()
         profile_section.setStyleSheet(
-            f"background: white; border-bottom: 1px solid {C['slate_200']};"
+            f"background: {C['white']}; border-bottom: 1px solid {C['slate_200']};"
         )
         ps_lay = QVBoxLayout(profile_section)
         ps_lay.setContentsMargins(20, 20, 20, 16)
@@ -169,7 +169,7 @@ class DashboardPage(QWidget):
         # Rehearsals heading
         rh_heading = QWidget()
         rh_heading.setStyleSheet(
-            f"background: white; border-bottom: 1px solid {C['slate_200']};"
+            f"background: {C['white']}; border-bottom: 1px solid {C['slate_200']};"
         )
         rh_h_lay = QHBoxLayout(rh_heading)
         rh_h_lay.setContentsMargins(20, 14, 20, 14)
@@ -205,7 +205,7 @@ class DashboardPage(QWidget):
         # Sign out button
         signout_section = QWidget()
         signout_section.setStyleSheet(
-            f"background: white; border-top: 1px solid {C['slate_200']};"
+            f"background: {C['white']}; border-top: 1px solid {C['slate_200']};"
         )
         so_lay = QHBoxLayout(signout_section)
         so_lay.setContentsMargins(12, 10, 12, 10)

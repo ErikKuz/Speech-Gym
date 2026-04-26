@@ -19,13 +19,13 @@ class LoginPage(QWidget):
         super().__init__()
         self._workers = []
         self.setObjectName('LoginPage')
-        self.setStyleSheet("""
-            QWidget#LoginPage {
+        self.setStyleSheet(f"""
+            QWidget#LoginPage {{
                 background: qlineargradient(
                     x1:0, y1:0, x2:1, y2:1,
-                    stop:0 #F8FAFC, stop:0.5 #EFF6FF, stop:1 #EEF2FF
+                    stop:0 {C['bg_grad_0']}, stop:0.5 {C['bg_grad_1']}, stop:1 {C['bg_grad_2']}
                 );
-            }
+            }}
         """)
         self._build()
 

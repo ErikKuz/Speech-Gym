@@ -9,7 +9,7 @@ from PyQt5.QtWidgets import (
 from PyQt5.QtCore import Qt, pyqtSignal, QTimer
 from PyQt5.QtGui import QFont, QDragEnterEvent, QDropEvent
 
-from styles import (C, BTN_GHOST_SM, BTN_OUTLINE_SM, BTN_PRIMARY,
+from styles import (C, BTN_OUTLINE_SM, BTN_PRIMARY,
                     BTN_WHITE_TRANSPARENT, PROGRESS_STYLE, SCROLLBAR_STYLE)
 from api_client import ApiWorker, api
 from widgets import (Card, BadgePill, ScoreCircle, SmallScoreCircle,
@@ -112,7 +112,7 @@ class ChatBubbleAI(QFrame):
         self.setObjectName(name)
         self.setStyleSheet(f"""
             QFrame#{name} {{
-                background: white;
+                background: {C['white']};
                 border: 1px solid {C['slate_200']};
                 border-radius: 16px;
                 border-top-left-radius: 4px;
@@ -140,7 +140,7 @@ class ReportWidget(QFrame):
         self.setObjectName(name)
         self.setStyleSheet(f"""
             QFrame#{name} {{
-                background: white;
+                background: {C['white']};
                 border: 1px solid {C['slate_200']};
                 border-radius: 16px;
             }}
@@ -377,7 +377,7 @@ class UploadZone(QFrame):
         self.setAcceptDrops(True)
         self._idle_style = f"""
             QFrame#{self._name} {{
-                background: white;
+                background: {C['white']};
                 border: 2px dashed {C['slate_300']};
                 border-radius: 16px;
             }}
@@ -478,14 +478,32 @@ class RehearsalChatPage(QWidget):
         self.header = QFrame()
         self.header.setFixedHeight(60)
         self.header.setStyleSheet(
-            f"background: white; border-bottom: 1px solid {C['slate_200']};"
+            f"background: {C['white']}; border-bottom: 1px solid {C['slate_200']};"
         )
         h_lay = QHBoxLayout(self.header)
         h_lay.setContentsMargins(20, 0, 20, 0)
         h_lay.setSpacing(12)
 
         btn_back = QPushButton('← Back to Dashboard')
-        btn_back.setStyleSheet(BTN_GHOST_SM)
+        btn_back.setStyleSheet(f"""
+            QPushButton {{
+                background: {C['slate_100']};
+                color: {C['slate_800']};
+                border: 1px solid {C['slate_200']};
+                border-radius: 8px;
+                padding: 6px 12px;
+                font-size: 13px;
+                font-weight: 600;
+                text-align: left;
+            }}
+            QPushButton:hover {{
+                background: {C['slate_200']};
+                border-color: {C['slate_300']};
+            }}
+            QPushButton:pressed {{
+                background: {C['slate_300']};
+            }}
+        """)
         btn_back.setFixedHeight(32)
         btn_back.setCursor(Qt.PointingHandCursor)
         btn_back.clicked.connect(self._go_back)
@@ -795,7 +813,7 @@ class RehearsalChatPage(QWidget):
         proc_card.setObjectName('ProcCard')
         proc_card.setStyleSheet(f"""
             QFrame#ProcCard {{
-                background: white;
+                background: {C['white']};
                 border: 1px solid {C['indigo_200']};
                 border-radius: 16px;
             }}

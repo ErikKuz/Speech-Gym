@@ -17,3 +17,4 @@ speechgym-api/speechgym-codex.patch
 # Python generated files.
 __pycache__/
 *.py[cod]
+speechlab_pyqt/.speechlab_theme.json
