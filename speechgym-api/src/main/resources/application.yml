@@ -87,3 +87,12 @@ app:
     max-attempts: 5
     initial-backoff: PT2S
     max-backoff: PT15S
+  report:
+    base-url: http://localhost:8001
+    report-path: /report
+    health-path: /health
+    connect-timeout: PT5S
+    read-timeout: PT10M
+    max-attempts: 3
+    initial-backoff: PT2S
+    max-backoff: PT10S

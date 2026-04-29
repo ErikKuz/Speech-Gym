@@ -1,9 +1,13 @@
 package com.speechgym.jobs;
 
-import java.time.Instant;
+import java.util.ArrayList;
 import java.util.List;
+import java.util.LinkedHashSet;
+import java.util.Locale;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
+import java.util.regex.Pattern;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -12,6 +16,7 @@ import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Transactional;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.speechgym.asr.AsrClient;
 import com.speechgym.asr.AsrTranscription;
@@ -19,9 +24,11 @@ import com.speechgym.artifacts.ArtifactEntity;
 import com.speechgym.artifacts.ArtifactService;
 import com.speechgym.artifacts.ArtifactType;
 import com.speechgym.reports.PdfReportGenerator;
+import com.speechgym.reports.ReportAnalysisResponse;
 import com.speechgym.reports.ReportEntity;
 import com.speechgym.reports.ReportGenerationResult;
 import com.speechgym.reports.ReportRepository;
+import com.speechgym.reports.SpeechReportClient;
 import com.speechgym.sessions.SessionEntity;
 import com.speechgym.sessions.SessionRepository;
 import com.speechgym.storage.StorageService;
@@ -32,11 +39,34 @@ import com.speechgym.uploads.UploadService;
 @Component
 public class JobWorker {
     private static final Logger log = LoggerFactory.getLogger(JobWorker.class);
+    private static final TypeReference<Map<String, Object>> MAP_TYPE = new TypeReference<>() {
+    };
+    private static final Pattern WORD_PATTERN = Pattern.compile("[\\p{L}\\p{N}]+(?:[-'][\\p{L}\\p{N}]+)?");
+    private static final String DEFAULT_PITCH_TYPE = "investor_pitch";
+    private static final Set<String> SINGLE_WORD_FILLERS = Set.of(
+        "э",
+        "ээ",
+        "эээ",
+        "эм",
+        "ну",
+        "типа",
+        "значит",
+        "короче",
+        "собственно"
+    );
+    private static final List<List<String>> MULTI_WORD_FILLERS = List.of(
+        List.of("как", "бы"),
+        List.of("в", "общем"),
+        List.of("так", "сказать"),
+        List.of("на", "самом", "деле"),
+        List.of("это", "самое")
+    );
 
     private final JobService jobService;
     private final UploadService uploadService;
     private final StorageService storageService;
     private final AsrClient asrClient;
+    private final SpeechReportClient speechReportClient;
     private final ArtifactService artifactService;
     private final ReportRepository reportRepository;
     private final SessionRepository sessionRepository;
@@ -48,6 +78,7 @@ public class JobWorker {
         UploadService uploadService,
         StorageService storageService,
         AsrClient asrClient,
+        SpeechReportClient speechReportClient,
         ArtifactService artifactService,
         ReportRepository reportRepository,
         SessionRepository sessionRepository,
@@ -58,6 +89,7 @@ public class JobWorker {
         this.uploadService = uploadService;
         this.storageService = storageService;
         this.asrClient = asrClient;
+        this.speechReportClient = speechReportClient;
         this.artifactService = artifactService;
         this.reportRepository = reportRepository;
         this.sessionRepository = sessionRepository;
@@ -99,46 +131,53 @@ public class JobWorker {
             "segments", transcription.segments().size()
         ));
 
+        Map<String, Object> whisperJson = objectMapper.convertValue(transcription, MAP_TYPE);
+        String pitchType = resolvePitchType(job);
+        int targetDurationSec = resolveTargetDurationSec(job, transcription);
+
         job = jobService.markStage(message.jobId(), JobStatus.RUNNING_NLP, 45, "NLP stage started.");
-        pause();
-        byte[] nlp = jsonBytes(Map.of(
-            "fillerWordsCount", 6,
-            "structure", "Clear intro/body/outro",
-            "strengths", List.of("Strong opening", "Clear thesis")
-        ));
+        log.info(
+            "Submitting jobId={} to report service with pitchType={} targetDurationSec={}",
+            job.getId(),
+            pitchType,
+            targetDurationSec
+        );
+        ReportAnalysisResponse analysis = speechReportClient.generateReport(whisperJson, pitchType, targetDurationSec);
+        byte[] nlp = jsonBytes(analysis);
         artifactService.storeArtifact(job, ArtifactType.NLP_ANALYSIS_JSON, "application/json", nlp, Map.of(
-            "stage", "NLP"
+            "stage", "NLP",
+            "source", "speechgym-report-service",
+            "pitchType", pitchType,
+            "targetDurationSec", targetDurationSec
         ));
-        jobService.markStageCompleted(job.getId(), JobStatus.RUNNING_NLP, 60, "NLP stage completed.", Map.of());
+        jobService.markStageCompleted(
+            job.getId(),
+            JobStatus.RUNNING_NLP,
+            60,
+            "NLP stage completed.",
+            buildNlpStageMetadata(analysis)
+        );
 
         job = jobService.markStage(message.jobId(), JobStatus.RUNNING_VOICE, 75, "Voice stage started.");
-        pause();
+        VoiceMetrics voiceMetrics = buildVoiceMetrics(transcription, analysis);
         byte[] voice = jsonBytes(Map.of(
-            "paceWpm", 136,
-            "confidence", 81,
-            "clarity", 84
+            "paceWpm", voiceMetrics.paceWpm(),
+            "confidence", voiceMetrics.confidence(),
+            "clarity", voiceMetrics.clarity(),
+            "fillerWordsCount", voiceMetrics.fillerWordsCount()
         ));
         artifactService.storeArtifact(job, ArtifactType.VOICE_METRICS_JSON, "application/json", voice, Map.of(
             "stage", "VOICE"
         ));
-        jobService.markStageCompleted(job.getId(), JobStatus.RUNNING_VOICE, 85, "Voice stage completed.", Map.of());
+        jobService.markStageCompleted(job.getId(), JobStatus.RUNNING_VOICE, 85, "Voice stage completed.", Map.of(
+            "paceWpm", voiceMetrics.paceWpm(),
+            "fillerWordsCount", voiceMetrics.fillerWordsCount()
+        ));
 
         job = jobService.markStage(message.jobId(), JobStatus.RUNNING_REPORT, 92, "Report stage started.");
-        pause();
         SessionEntity session = sessionRepository.findById(job.getSessionId())
             .orElseThrow(() -> new IllegalStateException("Session missing for job."));
-        ReportGenerationResult result = new ReportGenerationResult(
-            82,
-            84,
-            136,
-            6,
-            81,
-            79,
-            "confident",
-            List.of("Clear call to action", "Good pacing"),
-            List.of("Reduce filler words", "Shorten the middle section"),
-            List.of("Practice transitions between key points", "Use a deliberate pause after the opening")
-        );
+        ReportGenerationResult result = buildReportResult(analysis, voiceMetrics);
         byte[] pdf = pdfReportGenerator.generate(session.getTitle(), result);
         ArtifactEntity pdfArtifact = artifactService.storeArtifact(
             job,
@@ -181,13 +220,247 @@ public class JobWorker {
         }
     }
 
-    private void pause() {
-        try {
-            Thread.sleep(50L);
+    private Map<String, Object> buildNlpStageMetadata(ReportAnalysisResponse analysis) {
+        ReportAnalysisResponse.PassportPitch passportPitch = analysis.report().passportPitch();
+        ReportAnalysisResponse.NextPitch nextPitch = analysis.report().nextPitch();
+        return Map.of(
+            "strengths", passportPitch.strengths().size(),
+            "blockers", passportPitch.blockers().size(),
+            "nextPitchBlocks", nextPitch.blocks().size()
+        );
+    }
+
+    private VoiceMetrics buildVoiceMetrics(AsrTranscription transcription, ReportAnalysisResponse analysis) {
+        List<String> tokens = tokenizeWords(transcription.text());
+        int wordCount = tokens.size();
+        int fillerWordsCount = countFillerWords(tokens);
+        int paceWpm = calculatePaceWpm(wordCount, estimateDurationSec(transcription));
+        int strengthBoost = Math.min(12, analysis.report().passportPitch().strengths().size() * 4);
+        int blockerPenalty = Math.min(18, analysis.report().passportPitch().blockers().size() * 5);
+        int fillerPenalty = Math.min(16, fillerWordsCount * 2);
+        int pacePenalty = pacePenalty(paceWpm);
+
+        int clarity = clamp(86 + strengthBoost - blockerPenalty - fillerPenalty - pacePenalty, 45, 98);
+        int confidence = clamp(82 + strengthBoost - blockerPenalty - Math.min(12, fillerWordsCount) - (pacePenalty / 2), 45, 96);
+        return new VoiceMetrics(paceWpm, fillerWordsCount, clarity, confidence);
+    }
+
+    private ReportGenerationResult buildReportResult(ReportAnalysisResponse analysis, VoiceMetrics voiceMetrics) {
+        ReportAnalysisResponse.PassportPitch passportPitch = analysis.report().passportPitch();
+        ReportAnalysisResponse.NextPitch nextPitch = analysis.report().nextPitch();
+        ReportAnalysisResponse.Recommendations recommendations = analysis.report().recommendations();
+
+        List<String> strengths = mergeOrderedUnique(passportPitch.strengths());
+        List<String> improvements = mergeOrderedUnique(passportPitch.blockers());
+        List<String> recommendationTitles = recommendations.changes().stream()
+            .map(ReportAnalysisResponse.RecommendationChange::title)
+            .toList();
+        List<String> mergedRecommendations = mergeOrderedUnique(
+            passportPitch.nextVersionChanges(),
+            recommendations.summary(),
+            recommendationTitles
+        );
+
+        int structureScore = clamp(
+            70
+                + Math.min(16, nextPitch.blocks().size() * 2)
+                + Math.min(8, recommendations.changes().size())
+                + Math.min(6, strengths.size() * 2)
+                - Math.min(12, improvements.size() * 4),
+            45,
+            97
+        );
+        int overallScore = clamp(
+            (int) Math.round(
+                (voiceMetrics.clarity() * 0.35)
+                    + (voiceMetrics.confidence() * 0.25)
+                    + (structureScore * 0.40)
+            ),
+            45,
+            97
+        );
+        String emotionalTone = resolveEmotionalTone(voiceMetrics.confidence());
+
+        return new ReportGenerationResult(
+            overallScore,
+            voiceMetrics.clarity(),
+            voiceMetrics.paceWpm(),
+            voiceMetrics.fillerWordsCount(),
+            voiceMetrics.confidence(),
+            structureScore,
+            emotionalTone,
+            strengths,
+            improvements,
+            mergedRecommendations
+        );
+    }
+
+    private String resolvePitchType(JobEntity job) {
+        String optionValue = readStringOption(job, "pitchType", "pitch_type");
+        if (optionValue == null || optionValue.isBlank()) {
+            return DEFAULT_PITCH_TYPE;
         }
-        catch (InterruptedException exception) {
-            Thread.currentThread().interrupt();
-            throw new IllegalStateException("Worker interrupted.", exception);
+        String normalized = optionValue.trim()
+            .toLowerCase(Locale.ROOT)
+            .replace('-', '_')
+            .replace(' ', '_')
+            .replaceAll("[^a-z0-9_]+", "");
+        return normalized.isBlank() ? DEFAULT_PITCH_TYPE : normalized;
+    }
+
+    private int resolveTargetDurationSec(JobEntity job, AsrTranscription transcription) {
+        Integer optionValue = readIntOption(job, "targetDurationSec", "target_duration_sec");
+        if (optionValue != null) {
+            return clamp(optionValue, 30, 1800);
         }
+        int derivedDuration = (int) Math.round(Math.max(estimateDurationSec(transcription), 30.0d));
+        return clamp(derivedDuration, 30, 1800);
+    }
+
+    private String readStringOption(JobEntity job, String... keys) {
+        Map<String, Object> options = job.getOptionsJson();
+        if (options == null || options.isEmpty()) {
+            return null;
+        }
+        for (String key : keys) {
+            Object value = options.get(key);
+            if (value instanceof String stringValue && !stringValue.isBlank()) {
+                return stringValue;
+            }
+        }
+        return null;
+    }
+
+    private Integer readIntOption(JobEntity job, String... keys) {
+        Map<String, Object> options = job.getOptionsJson();
+        if (options == null || options.isEmpty()) {
+            return null;
+        }
+        for (String key : keys) {
+            Object value = options.get(key);
+            if (value instanceof Number numberValue) {
+                return numberValue.intValue();
+            }
+            if (value instanceof String stringValue) {
+                try {
+                    return Integer.parseInt(stringValue.trim());
+                }
+                catch (NumberFormatException ignored) {
+                    // Ignore malformed option values and fall back to derived duration.
+                }
+            }
+        }
+        return null;
+    }
+
+    private List<String> tokenizeWords(String text) {
+        String source = text == null ? "" : text.toLowerCase(Locale.ROOT);
+        java.util.regex.Matcher matcher = WORD_PATTERN.matcher(source);
+        List<String> tokens = new ArrayList<>();
+        while (matcher.find()) {
+            tokens.add(matcher.group());
+        }
+        return tokens;
+    }
+
+    private int countFillerWords(List<String> tokens) {
+        int count = 0;
+        for (int index = 0; index < tokens.size(); index++) {
+            if (SINGLE_WORD_FILLERS.contains(tokens.get(index))) {
+                count++;
+            }
+            for (List<String> phrase : MULTI_WORD_FILLERS) {
+                if (matchesPhrase(tokens, index, phrase)) {
+                    count++;
+                }
+            }
+        }
+        return count;
+    }
+
+    private boolean matchesPhrase(List<String> tokens, int startIndex, List<String> phrase) {
+        if (startIndex + phrase.size() > tokens.size()) {
+            return false;
+        }
+        for (int offset = 0; offset < phrase.size(); offset++) {
+            if (!phrase.get(offset).equals(tokens.get(startIndex + offset))) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    private int calculatePaceWpm(int wordCount, double durationSec) {
+        if (wordCount <= 0 || durationSec <= 0.0d) {
+            return 0;
+        }
+        return (int) Math.round((wordCount * 60.0d) / durationSec);
+    }
+
+    private double estimateDurationSec(AsrTranscription transcription) {
+        if (transcription.duration() > 0.0d) {
+            return transcription.duration();
+        }
+        double minStart = Double.MAX_VALUE;
+        double maxEnd = 0.0d;
+        for (AsrTranscription.AsrSegment segment : transcription.segments()) {
+            minStart = Math.min(minStart, segment.start());
+            maxEnd = Math.max(maxEnd, segment.end());
+        }
+        if (minStart == Double.MAX_VALUE || maxEnd <= minStart) {
+            return 0.0d;
+        }
+        return maxEnd - minStart;
+    }
+
+    private int pacePenalty(int paceWpm) {
+        if (paceWpm <= 0) {
+            return 12;
+        }
+        return Math.min(14, Math.abs(paceWpm - 145) / 4);
+    }
+
+    private List<String> mergeOrderedUnique(List<String>... lists) {
+        LinkedHashSet<String> values = new LinkedHashSet<>();
+        for (List<String> list : lists) {
+            if (list == null) {
+                continue;
+            }
+            for (String value : list) {
+                if (value == null) {
+                    continue;
+                }
+                String cleaned = value.trim();
+                if (!cleaned.isBlank()) {
+                    values.add(cleaned);
+                }
+            }
+        }
+        return List.copyOf(values);
+    }
+
+    private String resolveEmotionalTone(int confidence) {
+        if (confidence >= 85) {
+            return "confident";
+        }
+        if (confidence >= 72) {
+            return "steady";
+        }
+        if (confidence >= 58) {
+            return "neutral";
+        }
+        return "uncertain";
+    }
+
+    private int clamp(int value, int min, int max) {
+        return Math.max(min, Math.min(max, value));
+    }
+
+    private record VoiceMetrics(
+        int paceWpm,
+        int fillerWordsCount,
+        int clarity,
+        int confidence
+    ) {
     }
 }

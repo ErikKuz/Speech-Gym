@@ -605,7 +605,7 @@ class PitchReportWidget(QFrame):
         PitchReportWidget._uid += 1
         object_name = f'PitchReportWidget{PitchReportWidget._uid}'
         self.setObjectName(object_name)
-        self._data = deepcopy(data or MOCK_REPORT)
+        self._data = deepcopy(data or {})
         self._active_tab = 'passport'
         self._tab_buttons = {}
         self.setStyleSheet(f"""
@@ -900,22 +900,6 @@ class PitchReportWidget(QFrame):
         layout.addWidget(make_label(text, size=13, color=C['slate_700'], wrap=True))
         return panel
 
-    def _change_badge(self, text: str, kind: str):
-        if kind == 'new':
-            palette = {'bg': C['indigo_100'], 'border': C['indigo_200'], 'text': C['indigo_600'], 'icon': '+'}
-        elif kind == 'combined':
-            palette = {'bg': C['blue_100'], 'border': C['blue_100'], 'text': C['blue_600'], 'icon': '='}
-        else:
-            palette = {'bg': C['amber_100'], 'border': C['amber_200'], 'text': C['amber_600'], 'icon': '~'}
-        return BadgePill(
-            palette['icon'],
-            text,
-            bg=palette['bg'],
-            border=palette['border'],
-            icon_color=palette['text'],
-            text_color=palette['text'],
-        )
-
     def _populate_passport_page(self):
         self._clear_layout(self._passport_layout)
         context = self._data.get('context') or {}
@@ -957,23 +941,16 @@ class PitchReportWidget(QFrame):
     def _populate_new_version_page(self):
         self._clear_layout(self._new_version_layout)
         next_version = self._data.get('nextVersion') or {}
+        blocks = list(next_version.get('blocks') or [])
+        if not blocks:
+            full_text = str(next_version.get('fullText') or next_version.get('full_text') or '').strip()
+            if full_text:
+                blocks = [{
+                    'title': next_version.get('title') or 'Следующая версия pitch',
+                    'content': full_text,
+                }]
 
-        for block in next_version.get('blocks') or []:
-            has_changes = bool(block.get('changes'))
-            kind = block.get('changeKind') or 'edited'
-            if has_changes and kind == 'new':
-                header_bg = C['slate_50']
-                header_border = C['slate_200']
-            elif has_changes and kind == 'combined':
-                header_bg = C['blue_100']
-                header_border = C['blue_100']
-            elif has_changes:
-                header_bg = C['amber_50']
-                header_border = C['amber_200']
-            else:
-                header_bg = C['slate_50']
-                header_border = C['slate_200']
-
+        for block in blocks:
             card = self._make_panel(bg=C['white'], border=C['slate_200'], radius=16)
             card_layout = QVBoxLayout(card)
             card_layout.setContentsMargins(0, 0, 0, 0)
@@ -981,29 +958,30 @@ class PitchReportWidget(QFrame):
 
             head = QFrame()
             head.setStyleSheet(f"""
-                background: {header_bg};
+                background: {C['slate_50']};
                 border: none;
-                border-bottom: 1px solid {header_border};
+                border-bottom: 1px solid {C['slate_200']};
                 border-top-left-radius: 16px;
                 border-top-right-radius: 16px;
             """)
             head_layout = QHBoxLayout(head)
             head_layout.setContentsMargins(18, 14, 18, 14)
             head_layout.setSpacing(10)
-            head_layout.addWidget(make_label(block.get('title') or '', size=15, weight=QFont.Bold))
+            head_layout.addWidget(make_label(block.get('title') or block.get('label') or '', size=15, weight=QFont.Bold))
             head_layout.addStretch()
-            if has_changes:
-                for change in block.get('changes') or []:
-                    head_layout.addWidget(self._change_badge(change, kind))
             card_layout.addWidget(head)
 
             body = QWidget()
             body_layout = QVBoxLayout(body)
             body_layout.setContentsMargins(18, 16, 18, 18)
             body_layout.setSpacing(0)
-            body_layout.addWidget(make_label(block.get('content') or '', size=14, color=C['slate_700'], wrap=True))
+            body_layout.addWidget(make_label(block.get('content') or block.get('text') or '', size=14, color=C['slate_700'], wrap=True))
             card_layout.addWidget(body)
             self._new_version_layout.addWidget(card)
+
+        if not str(next_version.get('note') or '').strip():
+            self._new_version_layout.addStretch()
+            return
 
         note_card = self._make_panel(bg=C['blue_50'], border=C['blue_100'], radius=16)
         note_layout = QVBoxLayout(note_card)
@@ -2097,7 +2075,7 @@ class RehearsalChatPage(QWidget):
         resolved_report_id = str(report_id or self._report_id or '')
         self._report_id = resolved_report_id or self._report_id
         self._add_ai_message('Анализ завершен. Ниже ваш подробный отчет с обратной связью.')
-        report_widget = self._add_report_widget(report_data or MOCK_REPORT, resolved_report_id)
+        report_widget = self._add_report_widget(report_data or self._build_report_payload(score=0), resolved_report_id)
         self._state = 'idle'
         self._add_upload_zone()
         self._ensure_settings_prompt_visible()
@@ -2129,7 +2107,7 @@ class RehearsalChatPage(QWidget):
         self.inner_lay.addWidget(ai_w)
 
         # Report widget
-        report = PitchReportWidget(report_data or MOCK_REPORT, self._on_download_pdf)
+        report = PitchReportWidget(report_data or self._build_report_payload(score=0), self._on_download_pdf)
         self.inner_lay.addWidget(report)
         self.inner_lay.addStretch()
 
@@ -2197,12 +2175,18 @@ class RehearsalChatPage(QWidget):
         return f'{b/1024**2:.1f} MB'
 
     def _map_report(self, report: dict) -> dict:
+        analysis_meta = report.get('analysisMeta') or {}
         return self._build_report_payload(
             score=self._score(report.get('overallScore')),
             strengths=report.get('strengths') or [],
             blockers=report.get('improvements') or [],
             recommendations=report.get('recommendations') or [],
             current_length=self._report_duration_label(report),
+            next_version_changes=report.get('nextVersionChanges') or [],
+            next_version=report.get('nextVersion') or {},
+            recommendations_summary=report.get('recommendationsSummary') or [],
+            recommendation_details=report.get('recommendationDetails') or [],
+            analysis_meta=analysis_meta,
         )
 
     def _build_report_payload(
@@ -2213,31 +2197,46 @@ class RehearsalChatPage(QWidget):
         blockers: list[str] | None = None,
         recommendations: list[str] | None = None,
         current_length: str = '',
+        next_version_changes: list[str] | None = None,
+        next_version: dict | None = None,
+        recommendations_summary: list[str] | None = None,
+        recommendation_details: list[dict] | None = None,
+        analysis_meta: dict | None = None,
     ) -> dict:
         strengths = [str(item).strip() for item in (strengths or []) if str(item).strip()]
         blockers = [str(item).strip() for item in (blockers or []) if str(item).strip()]
         recommendations = [str(item).strip() for item in (recommendations or []) if str(item).strip()]
+        next_version_changes = [str(item).strip() for item in (next_version_changes or []) if str(item).strip()]
+        recommendations_summary = [str(item).strip() for item in (recommendations_summary or []) if str(item).strip()]
 
-        report_data = deepcopy(MOCK_REPORT)
+        report_data = {
+            'reportTitle': '\u0420\u0430\u0437\u0431\u043e\u0440 \u0442\u0435\u043a\u0443\u0449\u0435\u0439 \u0432\u0435\u0440\u0441\u0438\u0438 \u043f\u0438\u0442\u0447\u0430',
+            'reportSubtitle': '\u0427\u0442\u043e \u0438\u0441\u043f\u0440\u0430\u0432\u0438\u0442\u044c \u043f\u0435\u0440\u0435\u0434 \u0441\u043b\u0435\u0434\u0443\u044e\u0449\u0438\u043c \u0432\u044b\u0441\u0442\u0443\u043f\u043b\u0435\u043d\u0438\u0435\u043c',
+            'context': {},
+            'strengths': strengths[:4],
+            'blockers': blockers[:4],
+            'nextVersionChanges': next_version_changes[:5],
+            'nextVersion': self._map_next_version(next_version),
+            'recommendationsSummary': recommendations_summary[:7] or recommendations[:7],
+            'recommendations': self._map_recommendation_details(recommendation_details),
+        }
         report_data['statusPill'] = self._report_status_label(score)
         report_data['statusSummary'] = self._report_status_summary(score, strengths, blockers)
 
-        if strengths:
-            report_data['strengths'] = strengths[:4]
-        if blockers:
-            report_data['blockers'] = blockers[:4]
-        if recommendations:
-            report_data['nextVersionChanges'] = recommendations[:5]
-            report_data['recommendationsSummary'] = recommendations[:5]
-            report_data['recommendations'] = self._build_recommendation_cards(blockers, recommendations)
-
         context = dict(report_data.get('context') or {})
         session = self._session or self._config.get('session') or {}
-        speech_type = (session.get('goal') or session.get('scenario') or session.get('audienceType') or '').strip()
+        analysis_meta = analysis_meta or {}
+        speech_type = (
+            session.get('goal')
+            or session.get('scenario')
+            or session.get('audienceType')
+            or self._humanize_pitch_type(analysis_meta.get('pitchType'))
+            or ''
+        ).strip()
         if speech_type:
             context['speechType'] = speech_type[:64]
 
-        duration_target_seconds = int(session.get('durationTargetSeconds') or 0)
+        duration_target_seconds = self._as_int(session.get('durationTargetSeconds')) or self._as_int(analysis_meta.get('targetDurationSec'))
         if duration_target_seconds:
             context['timeLimit'] = format_duration_text(duration_target_seconds)
 
@@ -2288,6 +2287,10 @@ class RehearsalChatPage(QWidget):
             if seconds > 0:
                 minutes, remainder = divmod(seconds, 60)
                 return f'~{minutes}:{remainder:02d}'
+        analysis_meta = report.get('analysisMeta') or {}
+        actual_duration = str(analysis_meta.get('actualDuration') or '').strip()
+        if actual_duration:
+            return f'~{actual_duration}'
         return ''
 
     @staticmethod
@@ -2307,6 +2310,68 @@ class RehearsalChatPage(QWidget):
                 'whatAudienceFeels': 'Больше уверенности в спикере и в логике самого питча.',
             })
         return cards or deepcopy(MOCK_REPORT['recommendations'])
+
+    @staticmethod
+    def _map_next_version(next_version: dict | None) -> dict:
+        next_version = next_version or {}
+        blocks = []
+        for index, block in enumerate(next_version.get('blocks') or []):
+            if not isinstance(block, dict):
+                continue
+            title = str(block.get('title') or block.get('label') or '').strip()
+            content = str(block.get('content') or block.get('text') or '').strip()
+            if title and content:
+                blocks.append({
+                    'id': f'next-version-{index + 1}',
+                    'title': title,
+                    'content': content,
+                })
+        return {
+            'title': str(next_version.get('title') or 'Ð¡Ð»ÐµÐ´ÑƒÑŽÑ‰Ð°Ñ Ð²ÐµÑ€ÑÐ¸Ñ pitch').strip() or 'Ð¡Ð»ÐµÐ´ÑƒÑŽÑ‰Ð°Ñ Ð²ÐµÑ€ÑÐ¸Ñ pitch',
+            'fullText': str(next_version.get('fullText') or next_version.get('full_text') or '').strip(),
+            'blocks': blocks,
+            'note': str(next_version.get('note') or '').strip(),
+        }
+
+    @staticmethod
+    def _map_recommendation_details(recommendation_details: list[dict] | None) -> list[dict]:
+        cards = []
+        for index, change in enumerate(recommendation_details or []):
+            if not isinstance(change, dict):
+                continue
+            audience_effect = change.get('audienceEffect') or {}
+            if not isinstance(audience_effect, dict):
+                audience_effect = {}
+            cards.append({
+                'id': f'real-{index + 1}',
+                'section': str(change.get('title') or f'Ð ÐµÐºÐ¾Ð¼ÐµÐ½Ð´Ð°Ñ†Ð¸Ñ {index + 1}').strip(),
+                'before': str(change.get('before') or '').strip(),
+                'after': str(change.get('after') or '').strip(),
+                'whyOldWasWeaker': str(change.get('whyBeforeWeaker') or '').strip(),
+                'whyNewIsBetter': str(change.get('whyAfterBetter') or '').strip(),
+                'whatAudienceUnderstands': str(audience_effect.get('understandsBetter') or '').strip(),
+                'whatAudienceFeels': str(audience_effect.get('feelsMore') or '').strip(),
+            })
+        return cards
+
+    @staticmethod
+    def _humanize_pitch_type(value) -> str:
+        raw = str(value or '').strip()
+        if not raw:
+            return ''
+        labels = {
+            'investor_pitch': '\u0418\u043d\u0432\u0435\u0441\u0442\u0438\u0446\u0438\u043e\u043d\u043d\u044b\u0439 \u043f\u0438\u0442\u0447',
+            'demo_day_pitch': 'Demo Day \u043f\u0438\u0442\u0447',
+            'grant_pitch': '\u0413\u0440\u0430\u043d\u0442\u043e\u0432\u044b\u0439 \u043f\u0438\u0442\u0447',
+        }
+        return labels.get(raw, raw.replace('_', ' '))
+
+    @staticmethod
+    def _as_int(value) -> int:
+        try:
+            return int(value or 0)
+        except (TypeError, ValueError):
+            return 0
 
     @staticmethod
     def _score(value) -> int:

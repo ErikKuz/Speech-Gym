@@ -5,6 +5,7 @@ import java.time.Duration;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.core.io.InputStreamResource;
 import org.springframework.http.HttpEntity;
 import org.springframework.http.HttpHeaders;
@@ -26,7 +27,7 @@ public class AsrHttpClient implements AsrClient {
     private final RestClient restClient;
     private final AppProperties.AsrProperties properties;
 
-    public AsrHttpClient(RestClient asrRestClient, AppProperties appProperties) {
+    public AsrHttpClient(@Qualifier("asrRestClient") RestClient asrRestClient, AppProperties appProperties) {
         this.restClient = asrRestClient;
         this.properties = appProperties.asr();
     }

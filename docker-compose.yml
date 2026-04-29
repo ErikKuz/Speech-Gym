@@ -80,6 +80,20 @@ services:
       timeout: 10s
       retries: 10
 
+  speechgym-report-service:
+    build:
+      context: ./test_anal
+    container_name: speechgym-report-service
+    env_file:
+      - ./.env
+    ports:
+      - "8001:8000"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
+      interval: 30s
+      timeout: 10s
+      retries: 10
+
   speechgym-api:
     build:
       context: ./speechgym-api
@@ -96,6 +110,7 @@ services:
       APP_STORAGE_MINIO_ACCESS_KEY: minioadmin
       APP_STORAGE_MINIO_SECRET_KEY: minioadmin
       APP_ASR_BASE_URL: http://asr-service:8000
+      APP_REPORT_BASE_URL: http://speechgym-report-service:8000
     ports:
       - "8080:8080"
     depends_on:
@@ -108,6 +123,8 @@ services:
       minio-init:
         condition: service_completed_successfully
       asr-service:
+        condition: service_healthy
+      speechgym-report-service:
         condition: service_healthy
 
 volumes:

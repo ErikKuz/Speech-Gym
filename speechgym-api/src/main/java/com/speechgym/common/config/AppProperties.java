@@ -11,7 +11,8 @@ public record AppProperties(
     JwtProperties jwt,
     RabbitProperties rabbit,
     StorageProperties storage,
-    AsrProperties asr
+    AsrProperties asr,
+    ReportProperties report
 ) {
     public record IdempotencyProperties(Duration ttl) {
     }
@@ -50,6 +51,18 @@ public record AppProperties(
     public record AsrProperties(
         String baseUrl,
         String transcribePath,
+        String healthPath,
+        Duration connectTimeout,
+        Duration readTimeout,
+        int maxAttempts,
+        Duration initialBackoff,
+        Duration maxBackoff
+    ) {
+    }
+
+    public record ReportProperties(
+        String baseUrl,
+        String reportPath,
         String healthPath,
         Duration connectTimeout,
         Duration readTimeout,

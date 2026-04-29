@@ -122,11 +122,17 @@ class MainWindow(QMainWindow):
             'settings':  self.p_settings,
         }
         target = mapping.get(target_page, self.p_welcome)
-        if target_data is not None and hasattr(target, 'load_data'):
-            target.load_data(target_data)
+        # if target_data is not None and hasattr(target, 'load_data'):
+        #     target.load_data(target_data)
+        resolved_target_data = target_data
+        if target_page == 'dashboard' and resolved_target_data is None:
+            resolved_target_data = {'refresh': True}
+        if resolved_target_data is not None and hasattr(target, 'load_data'):
+            target.load_data(resolved_target_data)
         self.stack.setCurrentWidget(target)
         self._current_page = target_page if target_page in mapping else 'welcome'
-        self._current_data = target_data
+        # self._current_data = target_data
+        self._current_data = resolved_target_data
 
     def _apply_theme_and_rebuild(self, theme_name: str, return_page: str = 'settings'):
         self.current_theme = 'dark' if str(theme_name).lower().strip() == 'dark' else 'light'
@@ -155,6 +161,8 @@ class MainWindow(QMainWindow):
             return
 
         payload = data
+        if page == 'dashboard' and payload is None:
+            payload = {'refresh': True}
         if page == 'settings':
             payload = dict(data or {})
             payload.setdefault('theme', self.current_theme)

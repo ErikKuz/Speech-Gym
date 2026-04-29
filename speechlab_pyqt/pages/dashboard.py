@@ -19,15 +19,6 @@ from session_settings import (
 )
 from widgets import Card, AvatarLabel, BadgePill, Separator, make_label, show_toast
 
-MOCK_REHEARSALS = [
-    {'id': '1', 'title': 'Презентация продаж за 4 квартал', 'date': '12.03.2026', 'duration': '12:34', 'score': 87, 'scenario': 'Заседание совета директоров'},
-    {'id': '2', 'title': 'Ключевое выступление о запуске продукта', 'date': '10.03.2026', 'duration': '18:22', 'score': 92, 'scenario': 'Выступление на конференции'},
-    {'id': '3', 'title': 'Выступление стендапа команды', 'date': '08.03.2026', 'duration': '5:12', 'score': 78, 'scenario': 'Командная встреча'},
-    {'id': '4', 'title': 'Инвесторский питч-дек', 'date': '05.03.2026', 'duration': '15:45', 'score': 85, 'scenario': 'Встреча с инвесторами'},
-    {'id': '5', 'title': 'Конференционный воркшоп', 'date': '01.03.2026', 'duration': '28:15', 'score': 90, 'scenario': 'Проведение воркшопа'},
-]
-
-
 class RehearsalItem(QFrame):
     """Clickable rehearsal list item for the sidebar."""
     clicked = pyqtSignal(dict)
@@ -197,11 +188,13 @@ class DashboardPage(QWidget):
         lc_lay.setSpacing(8)
         self.lc_lay = lc_lay
 
-        for r in MOCK_REHEARSALS:
-            item = RehearsalItem(r)
-            item.clicked.connect(self._open_rehearsal)
-            lc_lay.addWidget(item)
+        # for r in MOCK_REHEARSALS:
+        #     item = RehearsalItem(r)
+        #     item.clicked.connect(self._open_rehearsal)
+        #     lc_lay.addWidget(item)
         lc_lay.addStretch()
+
+        self._render_sessions([])
 
         list_scroll.setWidget(list_container)
         sb_layout.addWidget(list_scroll, 1)

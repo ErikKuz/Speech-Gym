@@ -63,6 +63,9 @@ abstract class AbstractIntegrationTest {
     protected ReportRepository reportRepository;
 
     @Autowired
+    protected StorageService storageService;
+
+    @Autowired
     protected IdempotencyKeyRepository idempotencyKeyRepository;
 
     @Autowired

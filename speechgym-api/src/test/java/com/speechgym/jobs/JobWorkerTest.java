@@ -2,12 +2,14 @@ package com.speechgym.jobs;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import java.nio.charset.StandardCharsets;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
 
@@ -25,7 +27,9 @@ import com.speechgym.artifacts.ArtifactEntity;
 import com.speechgym.artifacts.ArtifactService;
 import com.speechgym.artifacts.ArtifactType;
 import com.speechgym.reports.PdfReportGenerator;
+import com.speechgym.reports.ReportAnalysisResponse;
 import com.speechgym.reports.ReportRepository;
+import com.speechgym.reports.SpeechReportClient;
 import com.speechgym.sessions.SessionEntity;
 import com.speechgym.sessions.SessionRepository;
 import com.speechgym.storage.StorageService;
@@ -48,6 +52,9 @@ class JobWorkerTest {
     private AsrClient asrClient;
 
     @Mock
+    private SpeechReportClient speechReportClient;
+
+    @Mock
     private ArtifactService artifactService;
 
     @Mock
@@ -67,6 +74,7 @@ class JobWorkerTest {
             uploadService,
             storageService,
             asrClient,
+            speechReportClient,
             artifactService,
             reportRepository,
             sessionRepository,
@@ -118,6 +126,41 @@ class JobWorkerTest {
                     List.of(new AsrTranscription.AsrWord(0.0, 0.5, "privet"))
                 ))
             ));
+        when(speechReportClient.generateReport(any(), eq("investor_pitch"), anyInt()))
+            .thenReturn(new ReportAnalysisResponse(
+                new ReportAnalysisResponse.ReportPayload(
+                    new ReportAnalysisResponse.PassportPitch(
+                        List.of("Strong opening"),
+                        List.of("Sharpen the ask"),
+                        List.of("Add a clearer closing ask")
+                    ),
+                    new ReportAnalysisResponse.NextPitch(
+                        "Next version",
+                        List.of(
+                            new ReportAnalysisResponse.NextPitchBlock("Intro", "Demo intro"),
+                            new ReportAnalysisResponse.NextPitchBlock("Ask", "Demo ask")
+                        ),
+                        "Demo full text"
+                    ),
+                    new ReportAnalysisResponse.Recommendations(
+                        List.of("Open with a stronger market hook"),
+                        List.of(
+                            new ReportAnalysisResponse.RecommendationChange(
+                                "Opening",
+                                "Old opening",
+                                "New opening",
+                                "Old opening is too vague",
+                                "New opening is clearer",
+                                new ReportAnalysisResponse.AudienceEffect(
+                                    "Audience understands faster",
+                                    "Audience feels more confidence"
+                                )
+                            )
+                        )
+                    )
+                ),
+                new ReportAnalysisResponse.Meta("investor_pitch", "ru", 30, 1.2, "0:01", "GigaChat-Max")
+            ));
         when(reportRepository.findByJobId(jobId)).thenReturn(Optional.empty());
         when(sessionRepository.findById(sessionId)).thenReturn(Optional.of(session));
         when(pdfReportGenerator.generate(eq("Demo session"), any())).thenReturn("pdf".getBytes(StandardCharsets.UTF_8));
@@ -134,7 +177,12 @@ class JobWorkerTest {
         assertThat(asrCallIndex).isGreaterThanOrEqualTo(0);
         String storedTranscript = new String(bytesCaptor.getAllValues().get(asrCallIndex), StandardCharsets.UTF_8);
         assertThat(storedTranscript).contains("\"language\":\"ru\"");
+        assertThat(storedTranscript).contains("\"text\":\"privet mir\"");
         assertThat(storedTranscript).contains("privet mir");
+        ArgumentCaptor<Map<String, Object>> whisperCaptor = ArgumentCaptor.forClass(Map.class);
+        verify(speechReportClient).generateReport(whisperCaptor.capture(), eq("investor_pitch"), eq(30));
+        assertThat(whisperCaptor.getValue()).containsEntry("language", "ru");
+        assertThat(whisperCaptor.getValue().get("text")).isEqualTo("privet mir");
         verify(jobService).markDone(jobId);
     }
 }

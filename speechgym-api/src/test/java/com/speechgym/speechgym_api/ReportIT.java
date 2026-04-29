@@ -5,6 +5,8 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
+import java.io.ByteArrayInputStream;
+import java.nio.charset.StandardCharsets;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
@@ -56,6 +58,71 @@ class ReportIT extends AbstractIntegrationTest {
         artifact.setMetadataJson(Map.of("source", "test"));
         artifact = artifactRepository.save(artifact);
 
+        String analysisObjectKey = "analysis/" + jobId + ".json";
+        String analysisJson = """
+            {
+              "report": {
+                "passport_pitch": {
+                  "strengths": ["Clear opening"],
+                  "blockers": ["Tighter close"],
+                  "next_version_changes": ["Lead with traction"]
+                },
+                "next_pitch": {
+                  "title": "Следующая версия pitch",
+                  "blocks": [
+                    {
+                      "label": "Вступление",
+                      "text": "Новый заход"
+                    }
+                  ],
+                  "full_text": "Новый полный текст"
+                },
+                "recommendations": {
+                  "summary": ["Собрать более сильное начало"],
+                  "changes": [
+                    {
+                      "title": "Начало",
+                      "before": "Старый текст",
+                      "after": "Новый текст",
+                      "why_before_weaker": "Слабый старт",
+                      "why_after_better": "Более четко",
+                      "audience_effect": {
+                        "understands_better": "Понятнее",
+                        "feels_more": "Больше доверия"
+                      }
+                    }
+                  ]
+                }
+              },
+              "meta": {
+                "pitch_type": "investor_pitch",
+                "language": "ru",
+                "target_duration_sec": 300,
+                "actual_duration_sec": 288.24,
+                "actual_duration": "4:48",
+                "model": "GigaChat-Max"
+              }
+            }
+            """;
+        ArtifactEntity nlpArtifact = new ArtifactEntity();
+        nlpArtifact.setJobId(UUID.fromString(jobId));
+        nlpArtifact.setUserId(session.getUserId());
+        nlpArtifact.setSessionId(session.getId());
+        nlpArtifact.setType(ArtifactType.NLP_ANALYSIS_JSON);
+        nlpArtifact.setBucketName("speechgym-artifacts");
+        nlpArtifact.setObjectKey(analysisObjectKey);
+        nlpArtifact.setContentType("application/json");
+        nlpArtifact.setSizeBytes(analysisJson.getBytes(StandardCharsets.UTF_8).length);
+        nlpArtifact.setMetadataJson(Map.of("source", "test"));
+        artifactRepository.save(nlpArtifact);
+        storageService.putObject(
+            "speechgym-artifacts",
+            analysisObjectKey,
+            new ByteArrayInputStream(analysisJson.getBytes(StandardCharsets.UTF_8)),
+            analysisJson.getBytes(StandardCharsets.UTF_8).length,
+            "application/json"
+        );
+
         ReportEntity report = new ReportEntity();
         report.setJobId(UUID.fromString(jobId));
         report.setUserId(session.getUserId());
@@ -84,5 +151,17 @@ class ReportIT extends AbstractIntegrationTest {
         mockMvc.perform(get("/api/v1/sessions/{sessionId}/reports", sessionId)
                 .header("Authorization", "Bearer " + otherToken))
             .andExpect(status().isNotFound());
+
+        mockMvc.perform(get("/api/v1/reports/{reportId}", report.getId())
+                .header("Authorization", "Bearer " + ownerToken))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.nextVersionChanges[0]").value("Lead with traction"))
+            .andExpect(jsonPath("$.nextVersion.title").value("Следующая версия pitch"))
+            .andExpect(jsonPath("$.nextVersion.blocks[0].label").value("Вступление"))
+            .andExpect(jsonPath("$.recommendationsSummary[0]").value("Собрать более сильное начало"))
+            .andExpect(jsonPath("$.recommendationDetails[0].title").value("Начало"))
+            .andExpect(jsonPath("$.recommendationDetails[0].whyBeforeWeaker").value("Слабый старт"))
+            .andExpect(jsonPath("$.recommendationDetails[0].audienceEffect.understandsBetter").value("Понятнее"))
+            .andExpect(jsonPath("$.analysisMeta.actualDuration").value("4:48"));
     }
 }

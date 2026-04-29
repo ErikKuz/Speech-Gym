@@ -67,6 +67,16 @@ class AsrHttpClientTest {
                 5,
                 Duration.ofSeconds(2),
                 Duration.ofSeconds(15)
+            ),
+            new AppProperties.ReportProperties(
+                "http://localhost:8001",
+                "/report",
+                "/health",
+                Duration.ofSeconds(5),
+                Duration.ofMinutes(10),
+                3,
+                Duration.ofSeconds(2),
+                Duration.ofSeconds(10)
             )
         );
         AsrHttpClient client = new AsrHttpClient(builder.baseUrl("http://localhost:8000").build(), properties);
@@ -74,6 +84,7 @@ class AsrHttpClientTest {
         AsrTranscription transcription = client.transcribe("demo.wav", "audio/wav", "audio".getBytes());
 
         assertThat(transcription.language()).isEqualTo("ru");
+        assertThat(transcription.text()).isEqualTo("privet");
         assertThat(transcription.languageProbability()).isEqualTo(0.98);
         assertThat(transcription.segments()).hasSize(1);
         assertThat(transcription.segments().getFirst().text()).isEqualTo("privet");
@@ -123,6 +134,16 @@ class AsrHttpClientTest {
                 2,
                 Duration.ZERO,
                 Duration.ZERO
+            ),
+            new AppProperties.ReportProperties(
+                "http://localhost:8001",
+                "/report",
+                "/health",
+                Duration.ofSeconds(5),
+                Duration.ofMinutes(10),
+                3,
+                Duration.ofSeconds(2),
+                Duration.ofSeconds(10)
             )
         );
         AsrHttpClient client = new AsrHttpClient(builder.baseUrl("http://localhost:8000").build(), properties);
