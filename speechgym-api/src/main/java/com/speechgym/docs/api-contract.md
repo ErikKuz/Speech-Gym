@@ -83,6 +83,23 @@ Response `200 OK`:
 }
 ```
 
+### `POST /auth/change-password`
+
+Headers:
+
+- `Authorization: Bearer ...`
+
+Request:
+
+```json
+{
+  "currentPassword": "Password123",
+  "newPassword": "Password456"
+}
+```
+
+Response `200 OK`: same shape as register/login (new access/refresh token pair).
+
 ## Sessions
 
 ### `POST /sessions`

@@ -8,6 +8,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import com.speechgym.auth.dto.AuthResponse;
+import com.speechgym.auth.dto.ChangePasswordRequest;
 import com.speechgym.auth.dto.LoginRequest;
 import com.speechgym.auth.dto.MeResponse;
 import com.speechgym.auth.dto.RegisterRequest;
@@ -86,6 +87,20 @@ public class AuthService {
             subscription.getValidUntil(),
             user.getCreatedAt()
         );
+    }
+
+    @Transactional
+    public AuthResponse changePassword(UUID userId, ChangePasswordRequest request) {
+        UserEntity user = userRepository.findById(userId)
+            .orElseThrow(() -> new ResourceNotFoundException("User was not found."));
+        if (!passwordEncoder.matches(request.currentPassword(), user.getPasswordHash())) {
+            throw new UnprocessableEntityException("Current password is incorrect.");
+        }
+        if (passwordEncoder.matches(request.newPassword(), user.getPasswordHash())) {
+            throw new UnprocessableEntityException("New password must be different from current password.");
+        }
+        user.setPasswordHash(passwordEncoder.encode(request.newPassword()));
+        return toAuthResponse(user, jwtTokenService.issueTokens(user));
     }
 
     private AuthResponse toAuthResponse(UserEntity user, TokenBundle tokens) {
