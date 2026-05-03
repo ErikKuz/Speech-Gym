@@ -83,6 +83,14 @@ Response `200 OK`:
 }
 ```
 
+### `DELETE /me`
+
+Headers:
+
+- `Authorization: Bearer ...`
+
+Response `204 No Content`.
+
 ### `POST /auth/change-password`
 
 Headers:
