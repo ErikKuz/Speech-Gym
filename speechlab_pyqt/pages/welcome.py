@@ -17,6 +17,7 @@ class WelcomePage(QWidget):
     def __init__(self):
         super().__init__()
         self.setObjectName('WelcomePage')
+        self.setAttribute(Qt.WA_StyledBackground, True)
         self.setStyleSheet(f"""
             QWidget#WelcomePage {{
                 background: qlineargradient(
