@@ -103,6 +103,15 @@ public class AuthService {
         return toAuthResponse(user, jwtTokenService.issueTokens(user));
     }
 
+    @Transactional
+    public void deleteAccount(UUID userId) {
+        // Explicit "find then delete" gives a clear 404-style business error when user is already missing.
+        UserEntity user = userRepository.findById(userId)
+            .orElseThrow(() -> new ResourceNotFoundException("User was not found."));
+        // Entity relationships/cascades defined in JPA mappings clean up owned rows on user deletion.
+        userRepository.delete(user);
+    }
+
     private AuthResponse toAuthResponse(UserEntity user, TokenBundle tokens) {
         return new AuthResponse(
             user.getId(),

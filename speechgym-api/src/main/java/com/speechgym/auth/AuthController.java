@@ -2,6 +2,7 @@ package com.speechgym.auth;
 
 import org.springframework.http.HttpStatus;
 import org.springframework.validation.annotation.Validated;
+import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
@@ -50,6 +51,13 @@ public class AuthController {
     @GetMapping("/me")
     public MeResponse me() {
         return authService.me(currentUserService.requireUserId());
+    }
+
+    @DeleteMapping("/me")
+    @ResponseStatus(HttpStatus.NO_CONTENT)
+    public void deleteMe() {
+        // Deletes exactly the currently authenticated user (from JWT subject).
+        authService.deleteAccount(currentUserService.requireUserId());
     }
 
     @PostMapping("/auth/change-password")

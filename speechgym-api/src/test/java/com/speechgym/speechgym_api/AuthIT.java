@@ -1,5 +1,7 @@
 package com.speechgym.speechgym_api;
 
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
@@ -138,5 +140,30 @@ class AuthIT extends AbstractIntegrationTest {
                     """))
             .andExpect(status().isUnprocessableEntity())
             .andExpect(jsonPath("$.detail").value("Current password is incorrect."));
+    }
+
+    @Test
+    void deleteAccountRemovesUserAndOwnedData() throws Exception {
+        String email = "delete-account@example.com";
+        String token = registerAndLogin(email);
+
+        // Main contract: authenticated user can delete own account and receives 204 No Content.
+        mockMvc.perform(delete("/api/v1/me")
+                .header("Authorization", "Bearer " + token))
+            .andExpect(status().isNoContent());
+
+        // After deletion, old credentials must stop working.
+        mockMvc.perform(post("/api/v1/auth/login")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("""
+                    {
+                      "email":"%s",
+                      "password":"Password123"
+                    }
+                    """.formatted(email)))
+            .andExpect(status().isUnprocessableEntity());
+
+        // Sanity check: user record is removed from test database.
+        assertThat(userRepository.count()).isZero();
     }
 }

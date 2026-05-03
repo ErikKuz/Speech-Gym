@@ -43,6 +43,10 @@ Content-Type: application/json
 GET {{baseUrl}}/me
 Authorization: Bearer {{accessToken}}
 
+### Delete current account
+DELETE {{baseUrl}}/me
+Authorization: Bearer {{accessToken}}
+
 ### Change password
 POST {{baseUrl}}/auth/change-password
 Authorization: Bearer {{accessToken}}
