@@ -233,7 +233,7 @@ class Switch(QWidget):
 # ─────────────────────────────────────────────
 #  Badge Pill
 # ─────────────────────────────────────────────
-class BadgePill(QWidget):
+class BadgePill(QFrame):
     """Rounded pill badge with icon + text."""
 
     def __init__(self, icon, text,
@@ -249,7 +249,7 @@ class BadgePill(QWidget):
         name = f'BadgePill{BadgePill._uid}'
         self.setObjectName(name)
         self.setStyleSheet(f"""
-            QWidget#{name} {{
+            QFrame#{name} {{
                 background: {bg};
                 border-radius: 16px;
                 border: 1px solid {border};

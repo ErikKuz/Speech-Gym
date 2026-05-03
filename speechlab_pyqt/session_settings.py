@@ -1,7 +1,7 @@
 import re
 
 from PyQt5.QtCore import Qt
-from PyQt5.QtGui import QFont
+from PyQt5.QtGui import QFont, QIntValidator
 from PyQt5.QtWidgets import (
     QComboBox,
     QDialog,
@@ -51,15 +51,36 @@ DEFAULT_AUDIENCE = "Общая аудитория"
 DEFAULT_STYLE = "Общий"
 DEFAULT_DIFFICULTY = "INTERMEDIATE"
 DEFAULT_COACHING = "BALANCED"
+DURATION_MINUTES_MIN = 1
+DURATION_MINUTES_MAX = 120
 
 _LANGUAGE_LABELS_BY_CODE = {code: label for label, code in LANGUAGE_OPTIONS}
 _LANGUAGE_CODES_BY_LABEL = {label: code for label, code in LANGUAGE_OPTIONS}
 
 
+def configure_duration_input(field: QLineEdit) -> None:
+    field.setValidator(QIntValidator(DURATION_MINUTES_MIN, DURATION_MINUTES_MAX, field))
+    field.setMaxLength(3)
+    field.setPlaceholderText("Например: 15")
+
+
+def duration_validation_message(text: str) -> str:
+    value = (text or "").strip()
+    if not value:
+        return "Введите целевое время выступления"
+    if not re.fullmatch(r"\d+", value):
+        return "Целевое время выступления должно содержать только цифры"
+    minutes = int(value)
+    if not DURATION_MINUTES_MIN <= minutes <= DURATION_MINUTES_MAX:
+        return f"Целевое время выступления должно быть от {DURATION_MINUTES_MIN} до {DURATION_MINUTES_MAX} минут"
+    return ""
+
+
 def parse_duration_seconds(text: str) -> int:
-    match = re.search(r"\d+", text or "")
-    minutes = int(match.group(0)) if match else 15
-    return max(30, min(minutes * 60, 7200))
+    message = duration_validation_message(text)
+    if message:
+        raise ValueError(message)
+    return int((text or "").strip()) * 60
 
 
 def format_duration_text(seconds) -> str:
@@ -179,7 +200,8 @@ class SessionSettingsDialog(QDialog):
         self.setWindowTitle("Изменить настройки проекта")
         self.setModal(True)
         self.resize(760, 0)
-        self.setStyleSheet(f"background: {C['white']};")
+        self.setObjectName("SessionSettingsDialog")
+        self.setStyleSheet(f"QDialog#SessionSettingsDialog {{ background: {C['white']}; }}")
         self._compact = compact
         self._session_snapshot = dict(session or {})
         self._build()
@@ -234,9 +256,9 @@ class SessionSettingsDialog(QDialog):
 
             duration_col = QVBoxLayout()
             duration_col.setSpacing(8)
-            duration_col.addWidget(make_label("Целевая длительность", size=14, weight=QFont.Medium, color=C["slate_700"]))
+            duration_col.addWidget(make_label("Целевое время выступления *", size=14, weight=QFont.Medium, color=C["slate_700"]))
             self.duration_input = QLineEdit()
-            self.duration_input.setPlaceholderText("Например: 15 минут")
+            configure_duration_input(self.duration_input)
             self.duration_input.setStyleSheet(project_input_style())
             self.duration_input.setFixedHeight(44)
             duration_col.addWidget(self.duration_input)
@@ -271,9 +293,9 @@ class SessionSettingsDialog(QDialog):
 
             form_layout.addLayout(second_row)
         else:
-            form_layout.addWidget(make_label("Целевая длительность", size=14, weight=QFont.Medium, color=C["slate_700"]))
+            form_layout.addWidget(make_label("Целевое время выступления *", size=14, weight=QFont.Medium, color=C["slate_700"]))
             self.duration_input = QLineEdit()
-            self.duration_input.setPlaceholderText("Например: 15 минут")
+            configure_duration_input(self.duration_input)
             self.duration_input.setStyleSheet(project_input_style())
             self.duration_input.setFixedHeight(44)
             form_layout.addWidget(self.duration_input)
@@ -379,5 +401,9 @@ class SessionSettingsDialog(QDialog):
     def accept(self):
         if not self.title_input.text().strip():
             show_toast(self, "Введите название выступления", "error")
+            return
+        duration_error = duration_validation_message(self.duration_input.text())
+        if duration_error:
+            show_toast(self, duration_error, "error")
             return
         super().accept()

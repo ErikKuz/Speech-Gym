@@ -10,6 +10,108 @@ from pathlib import Path
 APP_DIR = Path(__file__).resolve().parent
 sys.path.insert(0, str(APP_DIR))
 
+BASE_SCREEN_WIDTH = 1920
+BASE_SCREEN_HEIGHT = 1080
+MAX_UI_SCALE = 1.6
+
+
+def _windows_screen_size():
+    if sys.platform != 'win32':
+        return None
+    try:
+        import ctypes
+        from ctypes import wintypes
+
+        ENUM_CURRENT_SETTINGS = -1
+        CCHDEVICENAME = 32
+        CCHFORMNAME = 32
+
+        class DEVMODE(ctypes.Structure):
+            _fields_ = [
+                ('dmDeviceName', wintypes.WCHAR * CCHDEVICENAME),
+                ('dmSpecVersion', wintypes.WORD),
+                ('dmDriverVersion', wintypes.WORD),
+                ('dmSize', wintypes.WORD),
+                ('dmDriverExtra', wintypes.WORD),
+                ('dmFields', wintypes.DWORD),
+                ('dmOrientation', wintypes.SHORT),
+                ('dmPaperSize', wintypes.SHORT),
+                ('dmPaperLength', wintypes.SHORT),
+                ('dmPaperWidth', wintypes.SHORT),
+                ('dmScale', wintypes.SHORT),
+                ('dmCopies', wintypes.SHORT),
+                ('dmDefaultSource', wintypes.SHORT),
+                ('dmPrintQuality', wintypes.SHORT),
+                ('dmColor', wintypes.SHORT),
+                ('dmDuplex', wintypes.SHORT),
+                ('dmYResolution', wintypes.SHORT),
+                ('dmTTOption', wintypes.SHORT),
+                ('dmCollate', wintypes.SHORT),
+                ('dmFormName', wintypes.WCHAR * CCHFORMNAME),
+                ('dmLogPixels', wintypes.WORD),
+                ('dmBitsPerPel', wintypes.DWORD),
+                ('dmPelsWidth', wintypes.DWORD),
+                ('dmPelsHeight', wintypes.DWORD),
+                ('dmDisplayFlags', wintypes.DWORD),
+                ('dmDisplayFrequency', wintypes.DWORD),
+                ('dmICMMethod', wintypes.DWORD),
+                ('dmICMIntent', wintypes.DWORD),
+                ('dmMediaType', wintypes.DWORD),
+                ('dmDitherType', wintypes.DWORD),
+                ('dmReserved1', wintypes.DWORD),
+                ('dmReserved2', wintypes.DWORD),
+                ('dmPanningWidth', wintypes.DWORD),
+                ('dmPanningHeight', wintypes.DWORD),
+            ]
+
+        devmode = DEVMODE()
+        devmode.dmSize = ctypes.sizeof(DEVMODE)
+        if ctypes.windll.user32.EnumDisplaySettingsW(None, ENUM_CURRENT_SETTINGS, ctypes.byref(devmode)):
+            width = int(devmode.dmPelsWidth)
+            height = int(devmode.dmPelsHeight)
+            if width > 0 and height > 0:
+                return width, height
+
+        user32 = ctypes.windll.user32
+        width = int(user32.GetSystemMetrics(0))
+        height = int(user32.GetSystemMetrics(1))
+        if width > 0 and height > 0:
+            return width, height
+    except (AttributeError, OSError, ValueError):
+        return None
+    return None
+
+
+def _compute_ui_scale(screen_size) -> float:
+    if not screen_size:
+        return 1.0
+    width, height = screen_size
+    raw_scale = min(width / BASE_SCREEN_WIDTH, height / BASE_SCREEN_HEIGHT)
+    if raw_scale <= 1.05:
+        return 1.0
+    return round(min(raw_scale, MAX_UI_SCALE), 2)
+
+
+def _configure_ui_scale():
+    os.environ.setdefault('QT_AUTO_SCREEN_SCALE_FACTOR', '1')
+    manual_scale = os.environ.get('SPEECHGYM_UI_SCALE')
+    if manual_scale:
+        try:
+            scale = max(1.0, min(float(manual_scale), MAX_UI_SCALE))
+        except ValueError:
+            scale = 1.0
+    else:
+        existing_scale = os.environ.get('QT_SCALE_FACTOR')
+        if existing_scale:
+            try:
+                if float(existing_scale) > 1.0:
+                    return
+            except ValueError:
+                pass
+        scale = _compute_ui_scale(_windows_screen_size())
+    if scale > 1.0:
+        os.environ['QT_SCALE_FACTOR'] = f'{scale:.2f}'.rstrip('0').rstrip('.')
+
 
 def _configure_qt_plugins():
     candidates = [
@@ -30,9 +132,10 @@ def _configure_qt_plugins():
 
 
 _configure_qt_plugins()
+_configure_ui_scale()
 
 from PyQt5.QtWidgets import QApplication, QMainWindow, QStackedWidget
-from PyQt5.QtCore import QTimer
+from PyQt5.QtCore import QTimer, Qt
 from PyQt5.QtGui import QFont
 
 import styles
@@ -59,6 +162,7 @@ class MainWindow(QMainWindow):
     def _reload_ui_modules(self):
         module_names = [
             'widgets',
+            'session_settings',
             'pages.welcome',
             'pages.signup',
             'pages.login',
@@ -179,6 +283,8 @@ class MainWindow(QMainWindow):
 
 
 def main():
+    QApplication.setAttribute(Qt.AA_EnableHighDpiScaling, True)
+    QApplication.setAttribute(Qt.AA_UseHighDpiPixmaps, True)
     app = QApplication(sys.argv)
     app.setStyle('Fusion')
 

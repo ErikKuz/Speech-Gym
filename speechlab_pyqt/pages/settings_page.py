@@ -2,7 +2,7 @@
 
 from PyQt5.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
-    QLineEdit, QTextEdit, QComboBox, QFrame, QScrollArea,
+    QLineEdit, QTextEdit, QFrame, QScrollArea,
     QSizePolicy, QDialog, QDialogButtonBox
 )
 from PyQt5.QtCore import Qt, pyqtSignal, QTimer
@@ -10,8 +10,9 @@ from PyQt5.QtGui import QFont
 
 from styles import (C, BTN_PRIMARY, BTN_OUTLINE, BTN_OUTLINE_SM,
                     BTN_DANGER_OUTLINE, BTN_DANGER,
-                    INPUT_STYLE, TEXTAREA_STYLE, COMBOBOX_STYLE, apply_scroll_area_theme)
+                    INPUT_STYLE, TEXTAREA_STYLE, apply_scroll_area_theme)
 from widgets import Card, AvatarLabel, Separator, Switch, make_label, show_toast
+from api_client import ApiWorker, api
 
 
 class ConfirmDeleteDialog(QDialog):
@@ -20,7 +21,8 @@ class ConfirmDeleteDialog(QDialog):
         self.setWindowTitle('Подтверждение удаления')
         self.setFixedWidth(440)
         self.setModal(True)
-        self.setStyleSheet(f"background: {C['white']};")
+        self.setObjectName("ConfirmDeleteDialog")
+        self.setStyleSheet(f"QDialog#ConfirmDeleteDialog {{ background: {C['white']}; }}")
 
         lay = QVBoxLayout(self)
         lay.setContentsMargins(28, 28, 28, 20)
@@ -66,6 +68,7 @@ class SettingsPage(QWidget):
         }
         self._theme_dark = False
         self._saving = False
+        self._workers = []
         self._build()
 
     def load_data(self, data: dict):
@@ -236,16 +239,6 @@ class SettingsPage(QWidget):
         self.bio_input.setFixedHeight(88)
         b_lay.addWidget(self.bio_input)
 
-        # Timezone
-        b_lay.addWidget(make_label('Часовой пояс', size=14, weight=QFont.Medium,
-                                   color=C['slate_700']))
-        self.tz_combo = QComboBox()
-        for tz in ['Восточное время (ET)', 'Центральное время (CT)', 'Горное время (MT)',
-                   'Тихоокеанское время (PT)', 'Лондон (GMT)', 'Париж (CET)']:
-            self.tz_combo.addItem(tz)
-        self.tz_combo.setStyleSheet(COMBOBOX_STYLE)
-        b_lay.addWidget(self.tz_combo)
-
         # Save button
         btn_row = QHBoxLayout()
         btn_row.addStretch()
@@ -383,32 +376,71 @@ class SettingsPage(QWidget):
                                      color=C['slate_900']))
         pw_text.addWidget(make_label('Последнее изменение: 3 месяца назад', size=13,
                                      color=C['slate_500']))
-        btn_pw = QPushButton('Изменить пароль')
-        btn_pw.setStyleSheet(BTN_OUTLINE)
-        btn_pw.setFixedHeight(38)
+        self.btn_toggle_password_form = QPushButton('Изменить пароль')
+        self.btn_toggle_password_form.setStyleSheet(BTN_OUTLINE)
+        self.btn_toggle_password_form.setFixedHeight(38)
+        self.btn_toggle_password_form.setCursor(Qt.PointingHandCursor)
+        self.btn_toggle_password_form.clicked.connect(lambda: self._toggle_password_form())
         pw_row.addLayout(pw_text)
         pw_row.addStretch()
-        pw_row.addWidget(btn_pw)
+        pw_row.addWidget(self.btn_toggle_password_form)
         b_lay.addLayout(pw_row)
-        b_lay.addSpacing(16)
-        b_lay.addWidget(Separator())
-        b_lay.addSpacing(16)
+        b_lay.addSpacing(18)
 
-        # 2FA row
-        tfa_row = QHBoxLayout()
-        tfa_text = QVBoxLayout()
-        tfa_text.setSpacing(4)
-        tfa_text.addWidget(make_label('Двухфакторная аутентификация', size=14,
-                                      weight=QFont.Medium, color=C['slate_900']))
-        tfa_text.addWidget(make_label('Добавьте дополнительный уровень защиты аккаунта',
-                                      size=13, color=C['slate_500']))
-        btn_tfa = QPushButton('Включить 2FA')
-        btn_tfa.setStyleSheet(BTN_OUTLINE)
-        btn_tfa.setFixedHeight(38)
-        tfa_row.addLayout(tfa_text)
-        tfa_row.addStretch()
-        tfa_row.addWidget(btn_tfa)
-        b_lay.addLayout(tfa_row)
+        self.password_form = QFrame()
+        self.password_form.setObjectName('PasswordForm')
+        self.password_form.setStyleSheet(f"""
+            QFrame#PasswordForm {{
+                background: {C['slate_50']};
+                border: 1px solid {C['slate_200']};
+                border-radius: 12px;
+            }}
+        """)
+        pf_lay = QVBoxLayout(self.password_form)
+        pf_lay.setContentsMargins(18, 16, 18, 18)
+        pf_lay.setSpacing(12)
+
+        pf_lay.addWidget(make_label('Смена пароля', size=14, weight=QFont.DemiBold,
+                                    color=C['slate_900']))
+        pf_lay.addWidget(make_label(
+            'Введите текущий пароль, затем новый пароль два раза. Новый пароль должен содержать от 8 до 72 символов.',
+            size=13, color=C['slate_600'], wrap=True
+        ))
+
+        self.current_password_input = self._password_input(
+            pf_lay,
+            'Текущий пароль',
+            'Введите текущий пароль',
+        )
+        self.new_password_input = self._password_input(
+            pf_lay,
+            'Новый пароль',
+            'Введите новый пароль',
+        )
+        self.repeat_password_input = self._password_input(
+            pf_lay,
+            'Повторите новый пароль',
+            'Введите новый пароль еще раз',
+        )
+
+        btn_row = QHBoxLayout()
+        btn_row.addStretch()
+        btn_cancel = QPushButton('Отмена')
+        btn_cancel.setStyleSheet(BTN_OUTLINE)
+        btn_cancel.setFixedHeight(38)
+        btn_cancel.setCursor(Qt.PointingHandCursor)
+        btn_cancel.clicked.connect(lambda: self._toggle_password_form(False))
+        self.btn_save_password = QPushButton('Сохранить пароль')
+        self.btn_save_password.setStyleSheet(BTN_PRIMARY)
+        self.btn_save_password.setFixedHeight(38)
+        self.btn_save_password.setCursor(Qt.PointingHandCursor)
+        self.btn_save_password.clicked.connect(self._change_password)
+        btn_row.addWidget(btn_cancel)
+        btn_row.addWidget(self.btn_save_password)
+        pf_lay.addLayout(btn_row)
+
+        self.password_form.setVisible(False)
+        b_lay.addWidget(self.password_form)
 
         lay.addWidget(body)
         return card
@@ -545,15 +577,15 @@ class SettingsPage(QWidget):
             size=13, color=C['slate_600'], wrap=True
         ))
 
-        btn_del = QPushButton('Удалить аккаунт')
-        btn_del.setStyleSheet(BTN_DANGER_OUTLINE)
-        btn_del.setFixedHeight(38)
-        btn_del.setCursor(Qt.PointingHandCursor)
-        btn_del.clicked.connect(self._on_delete_account)
+        self.btn_delete_account = QPushButton('Удалить аккаунт')
+        self.btn_delete_account.setStyleSheet(BTN_DANGER_OUTLINE)
+        self.btn_delete_account.setFixedHeight(38)
+        self.btn_delete_account.setCursor(Qt.PointingHandCursor)
+        self.btn_delete_account.clicked.connect(self._on_delete_account)
 
         b_lay.addLayout(text_col)
         b_lay.addStretch()
-        b_lay.addWidget(btn_del, 0, Qt.AlignVCenter)
+        b_lay.addWidget(self.btn_delete_account, 0, Qt.AlignVCenter)
         lay.addWidget(body)
         return card
 
@@ -584,7 +616,90 @@ class SettingsPage(QWidget):
         lay.addStretch()
         return header
 
+    def _password_input(self, parent_layout, label_text, placeholder_text):
+        parent_layout.addWidget(make_label(label_text, size=13, weight=QFont.Medium,
+                                           color=C['slate_700']))
+        row = QHBoxLayout()
+        row.setSpacing(8)
+
+        field = QLineEdit()
+        field.setStyleSheet(INPUT_STYLE)
+        field.setFixedHeight(42)
+        field.setPlaceholderText(placeholder_text)
+        field.setEchoMode(QLineEdit.Password)
+
+        btn_eye = QPushButton('👁')
+        btn_eye.setStyleSheet(BTN_OUTLINE_SM)
+        btn_eye.setFixedSize(42, 42)
+        btn_eye.setCheckable(True)
+        btn_eye.setCursor(Qt.PointingHandCursor)
+        btn_eye.toggled.connect(
+            lambda checked, current_field=field, button=btn_eye:
+                self._toggle_password_visibility(current_field, button, checked)
+        )
+
+        row.addWidget(field, 1)
+        row.addWidget(btn_eye)
+        parent_layout.addLayout(row)
+        return field
+
+    def _toggle_password_visibility(self, field: QLineEdit, button: QPushButton, visible: bool):
+        field.setEchoMode(QLineEdit.Normal if visible else QLineEdit.Password)
+        button.setText('🙈' if visible else '👁')
+
     # ── Actions ──────────────────────────────────────────────────────
+    def _toggle_password_form(self, visible=None):
+        if visible is None:
+            visible = not self.password_form.isVisible()
+        self.password_form.setVisible(bool(visible))
+        self.btn_toggle_password_form.setText('Скрыть' if visible else 'Изменить пароль')
+        if not visible:
+            self.current_password_input.clear()
+            self.new_password_input.clear()
+            self.repeat_password_input.clear()
+
+    def _change_password(self):
+        current_password = self.current_password_input.text()
+        new_password = self.new_password_input.text()
+        repeat_password = self.repeat_password_input.text()
+
+        if not current_password or not new_password or not repeat_password:
+            show_toast(self, 'Заполните все поля пароля', 'error')
+            return
+        if len(new_password) < 8:
+            show_toast(self, 'Пароль должен содержать не менее 8 символов', 'error')
+            return
+        if len(new_password) > 72:
+            show_toast(self, 'Пароль должен содержать не более 72 символов', 'error')
+            return
+        if new_password != repeat_password:
+            show_toast(self, 'Новые пароли не совпадают', 'error')
+            return
+        if new_password == current_password:
+            show_toast(self, 'Новый пароль должен отличаться от текущего', 'error')
+            return
+
+        self.btn_save_password.setText('Сохранение...')
+        self.btn_save_password.setEnabled(False)
+
+        worker = ApiWorker(lambda: api.change_password(current_password, new_password), self)
+        worker.succeeded.connect(self._password_changed)
+        worker.failed.connect(self._password_change_failed)
+        worker.finished.connect(lambda: self._forget_worker(worker))
+        self._workers.append(worker)
+        worker.start()
+
+    def _password_changed(self, _result):
+        self.btn_save_password.setText('Сохранить пароль')
+        self.btn_save_password.setEnabled(True)
+        self._toggle_password_form(False)
+        show_toast(self, 'Пароль успешно изменен', 'success')
+
+    def _password_change_failed(self, message):
+        self.btn_save_password.setText('Сохранить пароль')
+        self.btn_save_password.setEnabled(True)
+        show_toast(self, message, 'error')
+
     def _save_profile(self):
         self.btn_save_profile.setText('Сохранение...')
         self.btn_save_profile.setEnabled(False)
@@ -610,5 +725,26 @@ class SettingsPage(QWidget):
     def _on_delete_account(self):
         dialog = ConfirmDeleteDialog(self)
         if dialog.exec_() == QDialog.Accepted:
-            show_toast(self, 'Запрос на удаление аккаунта отправлен', 'success')
-            QTimer.singleShot(1500, lambda: self.navigate.emit('welcome', None))
+            self.btn_delete_account.setText('Удаление...')
+            self.btn_delete_account.setEnabled(False)
+            worker = ApiWorker(api.delete_account, self)
+            worker.succeeded.connect(self._account_deleted)
+            worker.failed.connect(self._delete_account_failed)
+            worker.finished.connect(lambda: self._forget_worker(worker))
+            self._workers.append(worker)
+            worker.start()
+
+    def _account_deleted(self, _result):
+        self.btn_delete_account.setText('Удалить аккаунт')
+        self.btn_delete_account.setEnabled(True)
+        show_toast(self, 'Аккаунт удален', 'success')
+        QTimer.singleShot(800, lambda: self.navigate.emit('welcome', None))
+
+    def _delete_account_failed(self, message):
+        self.btn_delete_account.setText('Удалить аккаунт')
+        self.btn_delete_account.setEnabled(True)
+        show_toast(self, message, 'error')
+
+    def _forget_worker(self, worker):
+        if worker in self._workers:
+            self._workers.remove(worker)

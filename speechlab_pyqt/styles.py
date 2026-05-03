@@ -411,9 +411,19 @@ def refresh_styles() -> None:
     global BTN_DANGER, BTN_WHITE_TRANSPARENT, INPUT_STYLE, TEXTAREA_STYLE
     global COMBOBOX_STYLE, PROGRESS_STYLE, CHECKBOX_STYLE, SCROLLBAR_STYLE
 
+    primary_bg = C['indigo_600']
+    primary_hover = '#4F46E5' if CURRENT_THEME == 'dark' else C['indigo_700']
+    primary_pressed = '#4338CA' if CURRENT_THEME == 'dark' else C['indigo_900']
+    primary_disabled = C['slate_300'] if CURRENT_THEME == 'dark' else C['indigo_300']
+    primary_disabled_text = C['slate_500'] if CURRENT_THEME == 'dark' else 'white'
+
+    outline_hover = C['slate_200'] if CURRENT_THEME == 'dark' else C['slate_100']
+    outline_pressed = C['slate_300'] if CURRENT_THEME == 'dark' else C['slate_200']
+    outline_hover_border = C['slate_500'] if CURRENT_THEME == 'dark' else C['slate_400']
+
     BTN_PRIMARY = f"""
         QPushButton {{
-            background-color: {C['indigo_600']};
+            background-color: {primary_bg};
             color: white;
             border: none;
             border-radius: 8px;
@@ -421,14 +431,14 @@ def refresh_styles() -> None:
             font-size: 14px;
             font-weight: 600;
         }}
-        QPushButton:hover {{ background-color: {C['indigo_700']}; }}
-        QPushButton:pressed {{ background-color: {C['indigo_900']}; }}
-        QPushButton:disabled {{ background-color: {C['indigo_300']}; color: white; }}
+        QPushButton:hover {{ background-color: {primary_hover}; }}
+        QPushButton:pressed {{ background-color: {primary_pressed}; }}
+        QPushButton:disabled {{ background-color: {primary_disabled}; color: {primary_disabled_text}; }}
     """
 
     BTN_PRIMARY_LG = f"""
         QPushButton {{
-            background-color: {C['indigo_600']};
+            background-color: {primary_bg};
             color: white;
             border: none;
             border-radius: 8px;
@@ -436,9 +446,9 @@ def refresh_styles() -> None:
             font-size: 15px;
             font-weight: 600;
         }}
-        QPushButton:hover {{ background-color: {C['indigo_700']}; }}
-        QPushButton:pressed {{ background-color: {C['indigo_900']}; }}
-        QPushButton:disabled {{ background-color: {C['indigo_300']}; }}
+        QPushButton:hover {{ background-color: {primary_hover}; }}
+        QPushButton:pressed {{ background-color: {primary_pressed}; }}
+        QPushButton:disabled {{ background-color: {primary_disabled}; color: {primary_disabled_text}; }}
     """
 
     BTN_OUTLINE = f"""
@@ -451,8 +461,8 @@ def refresh_styles() -> None:
             font-size: 14px;
             font-weight: 500;
         }}
-        QPushButton:hover {{ background-color: {C['slate_100']}; border-color: {C['slate_400']}; }}
-        QPushButton:pressed {{ background-color: {C['slate_200']}; }}
+        QPushButton:hover {{ background-color: {outline_hover}; border-color: {outline_hover_border}; }}
+        QPushButton:pressed {{ background-color: {outline_pressed}; }}
     """
 
     BTN_OUTLINE_LG = f"""
@@ -465,7 +475,7 @@ def refresh_styles() -> None:
             font-size: 15px;
             font-weight: 500;
         }}
-        QPushButton:hover {{ background-color: {C['slate_100']}; border-color: {C['slate_400']}; }}
+        QPushButton:hover {{ background-color: {outline_hover}; border-color: {outline_hover_border}; }}
     """
 
     BTN_OUTLINE_SM = f"""
@@ -478,7 +488,7 @@ def refresh_styles() -> None:
             font-size: 13px;
             font-weight: 500;
         }}
-        QPushButton:hover {{ background-color: {C['slate_100']}; }}
+        QPushButton:hover {{ background-color: {outline_hover}; }}
     """
 
     BTN_GHOST = f"""
