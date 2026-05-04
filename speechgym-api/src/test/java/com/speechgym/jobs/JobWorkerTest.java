@@ -103,6 +103,8 @@ class JobWorkerTest {
         SessionEntity session = new SessionEntity();
         ReflectionTestUtils.setField(session, "id", sessionId);
         session.setTitle("Demo session");
+        session.setDurationTargetSeconds(420);
+        session.setNotes("Focus on traction and the closing ask.");
 
         ArtifactEntity storedArtifact = new ArtifactEntity();
         ReflectionTestUtils.setField(storedArtifact, "id", UUID.randomUUID());
@@ -126,7 +128,7 @@ class JobWorkerTest {
                     List.of(new AsrTranscription.AsrWord(0.0, 0.5, "privet"))
                 ))
             ));
-        when(speechReportClient.generateReport(any(), eq("investor_pitch"), anyInt()))
+        when(speechReportClient.generateReport(any(), eq("investor_pitch"), anyInt(), any()))
             .thenReturn(new ReportAnalysisResponse(
                 new ReportAnalysisResponse.ReportPayload(
                     new ReportAnalysisResponse.PassportPitch(
@@ -159,11 +161,12 @@ class JobWorkerTest {
                         )
                     )
                 ),
-                new ReportAnalysisResponse.Meta("investor_pitch", "ru", 30, 1.2, "0:01", "GigaChat-Max")
+                new ReportAnalysisResponse.Meta("investor_pitch", "ru", 420, 1.2, "0:01", 100, true, "GigaChat-Max")
             ));
         when(reportRepository.findByJobId(jobId)).thenReturn(Optional.empty());
         when(sessionRepository.findById(sessionId)).thenReturn(Optional.of(session));
-        when(pdfReportGenerator.generate(eq("Demo session"), any())).thenReturn("pdf".getBytes(StandardCharsets.UTF_8));
+        when(pdfReportGenerator.generate(eq("Demo session"), any(), any()))
+            .thenReturn("pdf".getBytes(StandardCharsets.UTF_8));
         when(artifactService.storeArtifact(eq(job), any(), any(), any(), any())).thenReturn(storedArtifact);
 
         worker.consume(new ProcessJobMessage(jobId, userId, sessionId, uploadId));
@@ -180,7 +183,12 @@ class JobWorkerTest {
         assertThat(storedTranscript).contains("\"text\":\"privet mir\"");
         assertThat(storedTranscript).contains("privet mir");
         ArgumentCaptor<Map<String, Object>> whisperCaptor = ArgumentCaptor.forClass(Map.class);
-        verify(speechReportClient).generateReport(whisperCaptor.capture(), eq("investor_pitch"), eq(30));
+        verify(speechReportClient).generateReport(
+            whisperCaptor.capture(),
+            eq("investor_pitch"),
+            eq(420),
+            eq("Focus on traction and the closing ask.")
+        );
         assertThat(whisperCaptor.getValue()).containsEntry("language", "ru");
         assertThat(whisperCaptor.getValue().get("text")).isEqualTo("privet mir");
         verify(jobService).markDone(jobId);

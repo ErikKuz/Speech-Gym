@@ -95,11 +95,11 @@ class ReportIT extends AbstractIntegrationTest {
                 }
               },
               "meta": {
-                "pitch_type": "investor_pitch",
-                "language": "ru",
                 "target_duration_sec": 300,
                 "actual_duration_sec": 288.24,
                 "actual_duration": "4:48",
+                "actual_speaking_rate_wpm": 155,
+                "notes_used": true,
                 "model": "GigaChat-Max"
               }
             }
@@ -162,6 +162,8 @@ class ReportIT extends AbstractIntegrationTest {
             .andExpect(jsonPath("$.recommendationDetails[0].title").value("Начало"))
             .andExpect(jsonPath("$.recommendationDetails[0].whyBeforeWeaker").value("Слабый старт"))
             .andExpect(jsonPath("$.recommendationDetails[0].audienceEffect.understandsBetter").value("Понятнее"))
-            .andExpect(jsonPath("$.analysisMeta.actualDuration").value("4:48"));
+            .andExpect(jsonPath("$.analysisMeta.actualDuration").value("4:48"))
+            .andExpect(jsonPath("$.analysisMeta.actualSpeakingRateWpm").value(155))
+            .andExpect(jsonPath("$.analysisMeta.notesUsed").value(true));
     }
 }

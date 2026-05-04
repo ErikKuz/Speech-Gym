@@ -30,14 +30,23 @@ public class SpeechReportHttpClient implements SpeechReportClient {
     }
 
     @Override
-    public ReportAnalysisResponse generateReport(Map<String, Object> whisperJson, String pitchType, int targetDurationSec) {
+<<<<<<< Updated upstream
+    public ReportAnalysisResponse generateReport(Map<String, Object> whisperJson, String pitchType, int targetDurationSec, String notes) {
+=======
+    public ReportAnalysisResponse generateReport(
+        Map<String, Object> whisperJson,
+        String pitchType,
+        int targetDurationSec,
+        String notes
+    ) {
+>>>>>>> Stashed changes
         int maxAttempts = Math.max(1, properties.maxAttempts());
         Duration backoff = normalizeDuration(properties.initialBackoff());
         Duration maxBackoff = normalizeDuration(properties.maxBackoff());
 
         for (int attempt = 1; attempt <= maxAttempts; attempt++) {
             try {
-                return executeReport(whisperJson, pitchType, targetDurationSec);
+                return executeReport(whisperJson, pitchType, targetDurationSec, notes);
             }
             catch (Exception exception) {
                 if (!isRetriable(exception) || attempt == maxAttempts) {
@@ -70,11 +79,20 @@ public class SpeechReportHttpClient implements SpeechReportClient {
         throw new IllegalStateException("Unable to generate speech report.");
     }
 
-    private ReportAnalysisResponse executeReport(Map<String, Object> whisperJson, String pitchType, int targetDurationSec) {
+<<<<<<< Updated upstream
+    private ReportAnalysisResponse executeReport(Map<String, Object> whisperJson, String pitchType, int targetDurationSec, String notes) {
+=======
+    private ReportAnalysisResponse executeReport(
+        Map<String, Object> whisperJson,
+        String pitchType,
+        int targetDurationSec,
+        String notes
+    ) {
+>>>>>>> Stashed changes
         ReportAnalysisResponse response = restClient.post()
             .uri(properties.reportPath())
             .contentType(MediaType.APPLICATION_JSON)
-            .body(new ReportAnalysisRequest(whisperJson, pitchType, targetDurationSec))
+            .body(new ReportAnalysisRequest(whisperJson, pitchType, targetDurationSec, notes))
             .retrieve()
             .body(ReportAnalysisResponse.class);
         if (response == null) {

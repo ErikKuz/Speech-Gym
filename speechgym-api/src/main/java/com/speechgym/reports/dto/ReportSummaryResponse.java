@@ -33,7 +33,7 @@ public record ReportSummaryResponse(
         nextVersion = nextVersion == null ? new NextVersionResponse(null, null, null) : nextVersion;
         recommendationsSummary = recommendationsSummary == null ? List.of() : List.copyOf(recommendationsSummary);
         recommendationDetails = recommendationDetails == null ? List.of() : List.copyOf(recommendationDetails);
-        analysisMeta = analysisMeta == null ? new AnalysisMetaResponse(null, null, null, null, null, null) : analysisMeta;
+        analysisMeta = analysisMeta == null ? new AnalysisMetaResponse(null, null, null, null, null, null, null, null) : analysisMeta;
     }
 
     public record NextVersionResponse(
@@ -77,6 +77,8 @@ public record ReportSummaryResponse(
         Integer targetDurationSec,
         Double actualDurationSec,
         String actualDuration,
+        Integer actualSpeakingRateWpm,
+        Boolean notesUsed,
         String model
     ) {
     }

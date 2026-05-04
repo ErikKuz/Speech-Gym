@@ -93,7 +93,6 @@ MOCK_REPORT = {
     'reportTitle': 'Разбор текущей версии питча',
     'reportSubtitle': 'Что исправить перед следующим выступлением',
     'context': {
-        'speechType': 'Инвестиционный питч',
         'timeLimit': '5 минут',
         'currentLength': '~6:20',
         'currentLengthTone': 'warning',
@@ -996,8 +995,12 @@ class PitchReportWidget(QFrame):
 
         cards_row = QHBoxLayout()
         cards_row.setSpacing(12)
+<<<<<<< Updated upstream
         cards_row.addWidget(self._make_context_card('Тип выступления', context.get('speechType') or 'Инвестиционный питч'), 0, Qt.AlignTop)
         cards_row.addWidget(self._make_context_card('Лимит времени', context.get('timeLimit') or '5 минут'), 0, Qt.AlignTop)
+=======
+        cards_row.addWidget(self._make_context_card('Лимит времени', context.get('timeLimit') or '5 минут'))
+>>>>>>> Stashed changes
         cards_row.addWidget(
             self._make_context_card(
                 'Текущая длина',
@@ -2322,15 +2325,6 @@ class RehearsalChatPage(QWidget):
         context = dict(report_data.get('context') or {})
         session = self._session or self._config.get('session') or {}
         analysis_meta = analysis_meta or {}
-        speech_type = (
-            session.get('goal')
-            or session.get('scenario')
-            or session.get('audienceType')
-            or self._humanize_pitch_type(analysis_meta.get('pitchType'))
-            or ''
-        ).strip()
-        if speech_type:
-            context['speechType'] = speech_type[:64]
 
         duration_target_seconds = self._as_int(session.get('durationTargetSeconds')) or self._as_int(analysis_meta.get('targetDurationSec'))
         if duration_target_seconds:
@@ -2449,18 +2443,6 @@ class RehearsalChatPage(QWidget):
                 'whatAudienceFeels': str(audience_effect.get('feelsMore') or '').strip(),
             })
         return cards
-
-    @staticmethod
-    def _humanize_pitch_type(value) -> str:
-        raw = str(value or '').strip()
-        if not raw:
-            return ''
-        labels = {
-            'investor_pitch': '\u0418\u043d\u0432\u0435\u0441\u0442\u0438\u0446\u0438\u043e\u043d\u043d\u044b\u0439 \u043f\u0438\u0442\u0447',
-            'demo_day_pitch': 'Demo Day \u043f\u0438\u0442\u0447',
-            'grant_pitch': '\u0413\u0440\u0430\u043d\u0442\u043e\u0432\u044b\u0439 \u043f\u0438\u0442\u0447',
-        }
-        return labels.get(raw, raw.replace('_', ' '))
 
     @staticmethod
     def _as_int(value) -> int:

@@ -166,6 +166,8 @@ public class ReportService {
             meta.targetDurationSec(),
             meta.actualDurationSec(),
             meta.actualDuration(),
+            meta.actualSpeakingRateWpm(),
+            meta.notesUsed(),
             meta.model()
         );
     }
