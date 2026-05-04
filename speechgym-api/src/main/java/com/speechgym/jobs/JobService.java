@@ -239,7 +239,6 @@ public class JobService {
     ) {
         JobEventEntity event = new JobEventEntity();
         event.setJobId(job.getId());
-        event.setUserId(job.getUserId());
         event.setEventType(eventType);
         event.setStage(stage);
         event.setProgress(progress);

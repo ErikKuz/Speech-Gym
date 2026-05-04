@@ -1,6 +1,7 @@
     @baseUrl = http://localhost:8080/api/v1
 @email = MaxGord@example.com
 @password = Password123
+@newPassword = Password456
 @fullName = Smile
 @accessToken = eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJmYTlkM2MxZC1hZTU2LTQ0MmUtYTdiZS0zZDEzZGE2YmI5YTMiLCJmdWxsX25hbWUiOiJTbWlsZSIsInJvbGUiOiJVU0VSIiwiaXNzIjoic3BlZWNoZ3ltLWFwaSIsImV4cCI6MTc3Mzc2MzIxMywidG9rZW5fdHlwZSI6ImFjY2VzcyIsImlhdCI6MTc3Mzc2MjMxMywiZW1haWwiOiJtYXhnb3JkQGV4YW1wbGUuY29tIn0.YpT9K76Z7AewKYU9_g5Kc54-HcyQuKVP27lpqK3iMGg
 @refreshToken = eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJmYTlkM2MxZC1hZTU2LTQ0MmUtYTdiZS0zZDEzZGE2YmI5YTMiLCJmdWxsX25hbWUiOiJTbWlsZSIsInJvbGUiOiJVU0VSIiwiaXNzIjoic3BlZWNoZ3ltLWFwaSIsImV4cCI6MTc3NDk3MTkxMywidG9rZW5fdHlwZSI6InJlZnJlc2giLCJpYXQiOjE3NzM3NjIzMTMsImVtYWlsIjoibWF4Z29yZEBleGFtcGxlLmNvbSJ9.NI4bajICFjfobAKAEHOTquUO6iWglazchpWP2DW63pc
@@ -41,6 +42,20 @@ Content-Type: application/json
 ### Get current user
 GET {{baseUrl}}/me
 Authorization: Bearer {{accessToken}}
+
+### Delete current account
+DELETE {{baseUrl}}/me
+Authorization: Bearer {{accessToken}}
+
+### Change password
+POST {{baseUrl}}/auth/change-password
+Authorization: Bearer {{accessToken}}
+Content-Type: application/json
+
+{
+  "currentPassword": "{{password}}",
+  "newPassword": "{{newPassword}}"
+}
 
 ### Create session
 POST {{baseUrl}}/sessions

@@ -6,7 +6,7 @@ import os
 from PyQt5.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
     QFrame, QScrollArea, QSizePolicy, QFileDialog, QProgressBar,
-    QGridLayout, QStackedWidget
+    QGridLayout
 )
 from PyQt5.QtCore import Qt, pyqtSignal, QTimer, QPoint
 from PyQt5.QtGui import QFont, QDragEnterEvent, QDropEvent
@@ -608,6 +608,8 @@ class PitchReportWidget(QFrame):
         self._data = deepcopy(data or {})
         self._active_tab = 'passport'
         self._tab_buttons = {}
+        self._equal_height_pairs = []
+        self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
         self.setStyleSheet(f"""
             QFrame#{object_name} {{
                 background: {C['white']};
@@ -621,12 +623,16 @@ class PitchReportWidget(QFrame):
         root.setSpacing(0)
 
         header = QFrame()
+        header_name = f'{object_name}Header'
+        header.setObjectName(header_name)
         header.setStyleSheet(f"""
-            background: {C['slate_50']};
-            border: none;
-            border-top-left-radius: 20px;
-            border-top-right-radius: 20px;
-            border-bottom: 1px solid {C['slate_200']};
+            QFrame#{header_name} {{
+                background: {C['slate_50']};
+                border: none;
+                border-top-left-radius: 20px;
+                border-top-right-radius: 20px;
+                border-bottom: 1px solid {C['slate_200']};
+            }}
         """)
         header_layout = QVBoxLayout(header)
         header_layout.setContentsMargins(28, 22, 28, 22)
@@ -696,30 +702,42 @@ class PitchReportWidget(QFrame):
         header_layout.addLayout(tabs_row)
         root.addWidget(header)
 
-        self.stack = QStackedWidget()
-        self.stack.setStyleSheet('background: transparent; border: none;')
-        root.addWidget(self.stack)
+        self.content_host = QWidget()
+        self.content_host.setStyleSheet('background: transparent; border: none;')
+        self.content_host.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
+        self.content_layout = QVBoxLayout(self.content_host)
+        self.content_layout.setContentsMargins(0, 0, 0, 0)
+        self.content_layout.setSpacing(0)
+        root.addWidget(self.content_host, 0, Qt.AlignTop)
 
         self._passport_page, self._passport_layout = self._build_page()
         self._new_version_page, self._new_version_layout = self._build_page()
         self._recommendations_page, self._recommendations_layout = self._build_page()
-        self.stack.addWidget(self._passport_page)
-        self.stack.addWidget(self._new_version_page)
-        self.stack.addWidget(self._recommendations_page)
+        self._tab_pages = {
+            'passport': self._passport_page,
+            'newVersion': self._new_version_page,
+            'recommendations': self._recommendations_page,
+        }
+        self._active_page = None
 
         self._populate_passport_page()
         self._populate_new_version_page()
         self._populate_recommendations_page()
         self._refresh_tab_buttons()
         self._set_active_tab('passport')
+        QTimer.singleShot(0, self._sync_active_tab_height)
 
         footer = QFrame()
+        footer_name = f'{object_name}Footer'
+        footer.setObjectName(footer_name)
         footer.setStyleSheet(f"""
-            background: {C['slate_50']};
-            border: none;
-            border-top: 1px solid {C['slate_200']};
-            border-bottom-left-radius: 20px;
-            border-bottom-right-radius: 20px;
+            QFrame#{footer_name} {{
+                background: {C['slate_50']};
+                border: none;
+                border-top: 1px solid {C['slate_200']};
+                border-bottom-left-radius: 20px;
+                border-bottom-right-radius: 20px;
+            }}
         """)
         footer_layout = QHBoxLayout(footer)
         footer_layout.setContentsMargins(28, 12, 28, 12)
@@ -737,6 +755,7 @@ class PitchReportWidget(QFrame):
     def _build_page(self):
         page = QWidget()
         page.setStyleSheet('background: transparent;')
+        page.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
         layout = QVBoxLayout(page)
         layout.setContentsMargins(28, 24, 28, 28)
         layout.setSpacing(18)
@@ -756,12 +775,80 @@ class PitchReportWidget(QFrame):
     def _set_active_tab(self, tab_key: str):
         self._active_tab = tab_key
         self._refresh_tab_buttons()
-        page_map = {
-            'passport': self._passport_page,
-            'newVersion': self._new_version_page,
-            'recommendations': self._recommendations_page,
-        }
-        self.stack.setCurrentWidget(page_map.get(tab_key, self._passport_page))
+        target_page = self._tab_pages.get(tab_key, self._passport_page)
+        while self.content_layout.count():
+            item = self.content_layout.takeAt(0)
+            widget = item.widget()
+            if widget is not None:
+                widget.hide()
+                widget.setParent(None)
+
+        target_page.setParent(self.content_host)
+        self.content_layout.addWidget(target_page, 0, Qt.AlignTop)
+        target_page.show()
+        self._active_page = target_page
+        self._sync_active_tab_height()
+        QTimer.singleShot(0, self._sync_active_tab_height)
+
+    def _sync_active_tab_height(self):
+        current_widget = self._active_page
+        if current_widget is None:
+            return
+        layout = current_widget.layout()
+        if layout is not None:
+            layout.activate()
+        if self._active_tab == 'recommendations':
+            self._sync_equal_height_pairs()
+        current_widget.adjustSize()
+        self.content_host.adjustSize()
+        self.content_host.updateGeometry()
+        root_layout = self.layout()
+        if root_layout is not None:
+            root_layout.activate()
+        self.updateGeometry()
+        parent = self.parentWidget()
+        if parent is not None:
+            parent.updateGeometry()
+
+    def _register_equal_height_pair(self, left: QFrame, right: QFrame):
+        self._equal_height_pairs.append((left, right))
+        left.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        right.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+
+    def _sync_equal_height_pairs(self):
+        active_page = self._active_page
+        if active_page is None:
+            return
+        for left, right in self._equal_height_pairs:
+            if not self._is_child_of(left, active_page):
+                continue
+            for panel in (left, right):
+                panel.setMinimumHeight(0)
+                panel.setMaximumHeight(16777215)
+                panel_layout = panel.layout()
+                if panel_layout is not None:
+                    panel_layout.activate()
+            target_height = max(
+                left.sizeHint().height(),
+                right.sizeHint().height(),
+                left.minimumSizeHint().height(),
+                right.minimumSizeHint().height(),
+            )
+            left.setFixedHeight(target_height)
+            right.setFixedHeight(target_height)
+
+    @staticmethod
+    def _is_child_of(widget, parent) -> bool:
+        current = widget
+        while current is not None:
+            if current is parent:
+                return True
+            current = current.parentWidget()
+        return False
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        QTimer.singleShot(0, self._sync_active_tab_height)
 
     def _refresh_tab_buttons(self):
         for tab_key, button in self._tab_buttons.items():
@@ -807,10 +894,16 @@ class PitchReportWidget(QFrame):
 
     def _make_panel(self, *, bg=None, border=None, radius=16):
         panel = QFrame()
+        panel.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
+        PitchReportWidget._panel_uid = getattr(PitchReportWidget, '_panel_uid', 0) + 1
+        panel_name = f'PitchReportPanel{PitchReportWidget._panel_uid}'
+        panel.setObjectName(panel_name)
         panel.setStyleSheet(f"""
-            background: {bg or C['white']};
-            border: 1px solid {border or C['slate_200']};
-            border-radius: {radius}px;
+            QFrame#{panel_name} {{
+                background: {bg or C['white']};
+                border: 1px solid {border or C['slate_200']};
+                border-radius: {radius}px;
+            }}
         """)
         return panel
 
@@ -831,14 +924,7 @@ class PitchReportWidget(QFrame):
         layout.setContentsMargins(20, 18, 20, 18)
         layout.setSpacing(10)
         layout.addWidget(
-            BadgePill(
-                '•',
-                pill_text,
-                bg=palette['text'],
-                border=palette['text'],
-                icon_color='#FFFFFF',
-                text_color='#FFFFFF',
-            ),
+            make_label(pill_text, size=13, weight=QFont.DemiBold, color=C['slate_900']),
             0,
             Qt.AlignLeft,
         )
@@ -882,12 +968,14 @@ class PitchReportWidget(QFrame):
         layout = QVBoxLayout(panel)
         layout.setContentsMargins(16, 14, 16, 14)
         layout.setSpacing(8)
+        layout.setAlignment(Qt.AlignTop)
         layout.addWidget(make_label(title, size=11, weight=QFont.Bold, color=C['slate_500']))
         quote = make_label(f'“{text}”', size=14, color=C['slate_700'], wrap=True)
         font = quote.font()
         font.setItalic(True)
         quote.setFont(font)
-        layout.addWidget(quote)
+        layout.addWidget(quote, 0, Qt.AlignTop)
+        layout.addStretch()
         return panel
 
     def _make_text_panel(self, title: str, text: str, *, tone='neutral'):
@@ -896,8 +984,10 @@ class PitchReportWidget(QFrame):
         layout = QVBoxLayout(panel)
         layout.setContentsMargins(16, 14, 16, 14)
         layout.setSpacing(6)
+        layout.setAlignment(Qt.AlignTop)
         layout.addWidget(make_label(title, size=12, weight=QFont.Bold, color=C['slate_700']))
-        layout.addWidget(make_label(text, size=13, color=C['slate_700'], wrap=True))
+        layout.addWidget(make_label(text, size=13, color=C['slate_700'], wrap=True), 0, Qt.AlignTop)
+        layout.addStretch()
         return panel
 
     def _populate_passport_page(self):
@@ -906,14 +996,16 @@ class PitchReportWidget(QFrame):
 
         cards_row = QHBoxLayout()
         cards_row.setSpacing(12)
-        cards_row.addWidget(self._make_context_card('Тип выступления', context.get('speechType') or 'Инвестиционный питч'))
-        cards_row.addWidget(self._make_context_card('Лимит времени', context.get('timeLimit') or '5 минут'))
+        cards_row.addWidget(self._make_context_card('Тип выступления', context.get('speechType') or 'Инвестиционный питч'), 0, Qt.AlignTop)
+        cards_row.addWidget(self._make_context_card('Лимит времени', context.get('timeLimit') or '5 минут'), 0, Qt.AlignTop)
         cards_row.addWidget(
             self._make_context_card(
                 'Текущая длина',
                 context.get('currentLength') or '~6:20',
                 tone=context.get('currentLengthTone') or 'warning',
-            )
+            ),
+            0,
+            Qt.AlignTop,
         )
         self._passport_layout.addLayout(cards_row)
         self._passport_layout.addWidget(
@@ -923,20 +1015,25 @@ class PitchReportWidget(QFrame):
                 tone='info',
             )
         )
-        self._passport_layout.addWidget(
-            self._make_section_card('Что уже сильное', self._data.get('strengths') or [], tone='success')
-        )
-        self._passport_layout.addWidget(
-            self._make_section_card('Что мешает сейчас', self._data.get('blockers') or [], tone='warning')
-        )
-        self._passport_layout.addWidget(
-            self._make_section_card(
-                'Что изменится в следующей версии',
-                self._data.get('nextVersionChanges') or [],
-                tone='info',
+        strengths = self._data.get('strengths') or []
+        blockers = self._data.get('blockers') or []
+        next_changes = self._data.get('nextVersionChanges') or []
+        if strengths:
+            self._passport_layout.addWidget(
+                self._make_section_card('Что уже сильное', strengths, tone='success')
             )
-        )
-        self._passport_layout.addStretch()
+        if blockers:
+            self._passport_layout.addWidget(
+                self._make_section_card('Что мешает сейчас', blockers, tone='warning')
+            )
+        if next_changes:
+            self._passport_layout.addWidget(
+                self._make_section_card(
+                    'Что изменится в следующей версии',
+                    next_changes,
+                    tone='info',
+                )
+            )
 
     def _populate_new_version_page(self):
         self._clear_layout(self._new_version_layout)
@@ -980,7 +1077,6 @@ class PitchReportWidget(QFrame):
             self._new_version_layout.addWidget(card)
 
         if not str(next_version.get('note') or '').strip():
-            self._new_version_layout.addStretch()
             return
 
         note_card = self._make_panel(bg=C['blue_50'], border=C['blue_100'], radius=16)
@@ -990,10 +1086,10 @@ class PitchReportWidget(QFrame):
         note_layout.addWidget(make_label('Примечание', size=13, weight=QFont.Bold, color=C['slate_700']))
         note_layout.addWidget(make_label(next_version.get('note') or '', size=13, color=C['slate_700'], wrap=True))
         self._new_version_layout.addWidget(note_card)
-        self._new_version_layout.addStretch()
 
     def _populate_recommendations_page(self):
         self._clear_layout(self._recommendations_layout)
+        self._equal_height_pairs = []
 
         summary = self._make_panel(bg=C['violet_100'], border=C['indigo_200'], radius=16)
         summary_layout = QVBoxLayout(summary)
@@ -1038,34 +1134,34 @@ class PitchReportWidget(QFrame):
 
             compare_row = QHBoxLayout()
             compare_row.setSpacing(12)
-            compare_row.addWidget(self._make_quote_panel('Было', change.get('before') or '', tone='danger'))
-            compare_row.addWidget(self._make_quote_panel('Стало', change.get('after') or '', tone='success'))
+            before_panel = self._make_quote_panel('Было', change.get('before') or '', tone='danger')
+            after_panel = self._make_quote_panel('Стало', change.get('after') or '', tone='success')
+            self._register_equal_height_pair(before_panel, after_panel)
+            compare_row.addWidget(before_panel, 1, Qt.AlignTop)
+            compare_row.addWidget(after_panel, 1, Qt.AlignTop)
             content_layout.addLayout(compare_row)
 
             explain_row = QHBoxLayout()
             explain_row.setSpacing(12)
-            explain_row.addWidget(
-                self._make_text_panel('Почему старая версия слабее', change.get('whyOldWasWeaker') or '', tone='warning')
-            )
-            explain_row.addWidget(
-                self._make_text_panel('Почему новая версия лучше', change.get('whyNewIsBetter') or '', tone='success')
-            )
+            old_reason_panel = self._make_text_panel('Почему старая версия слабее', change.get('whyOldWasWeaker') or '', tone='warning')
+            new_reason_panel = self._make_text_panel('Почему новая версия лучше', change.get('whyNewIsBetter') or '', tone='success')
+            self._register_equal_height_pair(old_reason_panel, new_reason_panel)
+            explain_row.addWidget(old_reason_panel, 1, Qt.AlignTop)
+            explain_row.addWidget(new_reason_panel, 1, Qt.AlignTop)
             content_layout.addLayout(explain_row)
 
             impact_row = QHBoxLayout()
             impact_row.setSpacing(12)
-            impact_row.addWidget(
-                self._make_text_panel('Что аудитория понимает', change.get('whatAudienceUnderstands') or '', tone='info')
-            )
-            impact_row.addWidget(
-                self._make_text_panel('Что аудитория чувствует', change.get('whatAudienceFeels') or '', tone='accent')
-            )
+            understands_panel = self._make_text_panel('Что аудитория понимает', change.get('whatAudienceUnderstands') or '', tone='info')
+            feels_panel = self._make_text_panel('Что аудитория чувствует', change.get('whatAudienceFeels') or '', tone='accent')
+            self._register_equal_height_pair(understands_panel, feels_panel)
+            impact_row.addWidget(understands_panel, 1, Qt.AlignTop)
+            impact_row.addWidget(feels_panel, 1, Qt.AlignTop)
             content_layout.addLayout(impact_row)
 
             card_layout.addWidget(content)
             self._recommendations_layout.addWidget(card)
 
-        self._recommendations_layout.addStretch()
 
 
 # ── Upload drop zone ───────────────────────────────────────────────────────────
@@ -1508,7 +1604,7 @@ class RehearsalChatPage(QWidget):
             report_data,
             lambda report_id=report_id: self._on_download_pdf(report_id),
         )
-        self.inner_lay.addWidget(report)
+        self.inner_lay.addWidget(report, 0, Qt.AlignTop)
         return report
 
     def _show_status_state(self, title: str, body: str):
@@ -2108,7 +2204,7 @@ class RehearsalChatPage(QWidget):
 
         # Report widget
         report = PitchReportWidget(report_data or self._build_report_payload(score=0), self._on_download_pdf)
-        self.inner_lay.addWidget(report)
+        self.inner_lay.addWidget(report, 0, Qt.AlignTop)
         self.inner_lay.addStretch()
 
         if show_success_toast:
@@ -2160,7 +2256,7 @@ class RehearsalChatPage(QWidget):
         self.inner_lay.addWidget(ai_w)
 
         report = PitchReportWidget(report_data, self._on_download_pdf)
-        self.inner_lay.addWidget(report)
+        self.inner_lay.addWidget(report, 0, Qt.AlignTop)
         self.inner_lay.addStretch()
         self._state = 'success'
         self._apply_open_scroll_position()

@@ -16,6 +16,8 @@ class ApiClient:
     _FIELD_LABELS = {
         "email": "Электронная почта",
         "password": "Пароль",
+        "currentPassword": "Текущий пароль",
+        "newPassword": "Новый пароль",
         "fullName": "Имя и фамилия",
         "title": "Название",
         "goal": "Цель",
@@ -38,6 +40,8 @@ class ApiClient:
         "Job not found.": "Задача анализа не найдена.",
         "Report not found.": "Отчет не найден.",
         "Unable to transcribe audio with ASR service.": "Не удалось распознать аудио через ASR-сервис.",
+        "Current password is incorrect.": "Текущий пароль указан неверно.",
+        "New password must be different from current password.": "Новый пароль должен отличаться от текущего.",
         "Access denied.": "Доступ запрещен.",
         "Forbidden.": "Доступ запрещен.",
         "Unauthorized.": "Требуется повторный вход в аккаунт.",
@@ -100,6 +104,22 @@ class ApiClient:
     def me(self) -> dict[str, Any]:
         self.user = self._request("GET", "/me")
         return self.user
+
+    def delete_account(self) -> None:
+        self._request("DELETE", "/me", expect_json=False)
+        self.clear_auth()
+
+    def change_password(self, current_password: str, new_password: str) -> dict[str, Any]:
+        data = self._request(
+            "POST",
+            "/auth/change-password",
+            json={
+                "currentPassword": current_password,
+                "newPassword": new_password,
+            },
+        )
+        self._store_auth(data)
+        return data
 
     def list_sessions(self, page: int = 0, size: int = 20, query: Optional[str] = None) -> dict[str, Any]:
         params: dict[str, Any] = {"page": page, "size": size}

@@ -19,6 +19,7 @@ class LoginPage(QWidget):
         super().__init__()
         self._workers = []
         self.setObjectName('LoginPage')
+        self.setAttribute(Qt.WA_StyledBackground, True)
         self.setStyleSheet(f"""
             QWidget#LoginPage {{
                 background: qlineargradient(

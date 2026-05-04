@@ -27,9 +27,6 @@ public class JobEventEntity {
     @Column(name = "job_id", nullable = false)
     private UUID jobId;
 
-    @Column(name = "user_id", nullable = false)
-    private UUID userId;
-
     @Column(nullable = false, length = 64)
     private String stage;
 
@@ -60,14 +57,6 @@ public class JobEventEntity {
 
     public void setJobId(UUID jobId) {
         this.jobId = jobId;
-    }
-
-    public UUID getUserId() {
-        return userId;
-    }
-
-    public void setUserId(UUID userId) {
-        this.userId = userId;
     }
 
     public String getStage() {

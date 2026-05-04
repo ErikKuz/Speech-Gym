@@ -16,6 +16,8 @@ from session_settings import (
     DEFAULT_AUDIENCE,
     DEFAULT_STYLE,
     build_session_payload_from_form,
+    configure_duration_input,
+    duration_validation_message,
 )
 from widgets import Card, AvatarLabel, BadgePill, Separator, make_label, show_toast
 
@@ -263,10 +265,10 @@ class DashboardPage(QWidget):
         self.title_input.setFixedHeight(44)
         fc_lay.addWidget(self.title_input)
 
-        fc_lay.addWidget(make_label('Целевая длительность', size=14, weight=QFont.Medium,
+        fc_lay.addWidget(make_label('Целевое время выступления *', size=14, weight=QFont.Medium,
                                     color=C['slate_700']))
         self.dur_input = QLineEdit()
-        self.dur_input.setPlaceholderText('Например: 15 минут')
+        configure_duration_input(self.dur_input)
         self.dur_input.setStyleSheet(project_input_style())
         self.dur_input.setFixedHeight(44)
         fc_lay.addWidget(self.dur_input)
@@ -314,6 +316,10 @@ class DashboardPage(QWidget):
         title = self.title_input.text().strip()
         if not title:
             show_toast(self, 'Введите название выступления', 'error')
+            return
+        duration_error = duration_validation_message(self.dur_input.text())
+        if duration_error:
+            show_toast(self, duration_error, 'error')
             return
         if not api.has_auth():
             show_toast(self, 'Войдите в аккаунт перед созданием выступления', 'error')
