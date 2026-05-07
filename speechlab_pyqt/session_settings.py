@@ -98,6 +98,16 @@ def format_duration_text(seconds) -> str:
     return f"{minutes} {unit}"
 
 
+def duration_input_text(seconds) -> str:
+    try:
+        total_seconds = int(seconds or 0)
+    except (TypeError, ValueError):
+        total_seconds = 0
+    minutes = max(DURATION_MINUTES_MIN, round(total_seconds / 60)) if total_seconds else 15
+    minutes = min(minutes, DURATION_MINUTES_MAX)
+    return str(minutes)
+
+
 def language_code_for_label(label: str) -> str:
     return _LANGUAGE_CODES_BY_LABEL.get(label or "", "en")
 
@@ -333,7 +343,7 @@ class SessionSettingsDialog(QDialog):
     def load_session(self, session: dict):
         self.title_input.setText((session.get("title") or "").strip())
         self.notes_input.setPlainText((session.get("notes") or "").strip())
-        self.duration_input.setText(format_duration_text(session.get("durationTargetSeconds")))
+        self.duration_input.setText(duration_input_text(session.get("durationTargetSeconds")))
         if self._compact:
             return
 

@@ -1579,19 +1579,41 @@ class RehearsalChatPage(QWidget):
     def _ensure_settings_prompt_visible(self, *, scroll=False):
         prompt_text = session_prompt_text(self._session, compact=True)
         if not prompt_text:
+            self._remove_settings_prompt()
             return
 
-        self._settings_prompt_signature = session_prompt_signature(self._session, compact=True)
-        if self._settings_prompt_widget is not None:
-            self.inner_lay.removeWidget(self._settings_prompt_widget)
-            self._settings_prompt_widget.deleteLater()
-            self._settings_prompt_widget = None
+        signature = session_prompt_signature(self._session, compact=True)
+        if self._settings_prompt_widget is not None and self._settings_prompt_signature == signature:
+            return
 
+        self._remove_settings_prompt()
+        self._settings_prompt_signature = signature
         self._settings_prompt_widget = self._add_user_message(
             prompt_text,
             scroll=scroll,
             before_upload_zone=True,
         )
+
+    def _remove_settings_prompt(self):
+        if self._settings_prompt_widget is None:
+            self._settings_prompt_signature = None
+            return
+
+        self.inner_lay.removeWidget(self._settings_prompt_widget)
+        self._settings_prompt_widget.deleteLater()
+        self._settings_prompt_widget = None
+        self._settings_prompt_signature = None
+
+    def _build_upload_message(self, filename: str, size_str: str) -> str:
+        settings_text = session_prompt_text(self._session, compact=True)
+        file_text = f'Файл: {filename} ({size_str})'
+        if not settings_text:
+            return file_text
+        return f'{settings_text}\n\n{file_text}'
+
+    def _add_upload_message(self, filename: str, size_str: str, *, scroll=True):
+        self._has_attempts = True
+        self._add_user_message(self._build_upload_message(filename, size_str), scroll=scroll)
 
     def _show_session_ready_state(self):
         self._clear_inner_layout()
@@ -1735,10 +1757,9 @@ class RehearsalChatPage(QWidget):
         show_toast(self, localize_backend_message(message), 'error')
 
     def _render_uploaded_bubble(self, upload: dict, scroll=True):
-        filename = upload.get('originalFilename') or 'аудиофайл'
+        filename = upload.get('originalFilename') or upload.get('filename') or 'аудиофайл'
         size_str = self._fmt_size(int(upload.get('sizeBytes') or 0))
-        self._has_attempts = True
-        self._add_user_message(f'Загружено: {filename} ({size_str})', scroll=scroll)
+        self._add_upload_message(filename, size_str, scroll=scroll)
 
     def _build_attempts(self, uploads: list, jobs: list, reports: list) -> list[dict]:
         jobs_by_upload = defaultdict(list)
@@ -1928,19 +1949,17 @@ class RehearsalChatPage(QWidget):
 
         self._state = 'uploading'
         session_id = self._session_id
+        filename = os.path.basename(path)
+        size_str = self._fmt_size(size)
 
         if self._has_attempts or self._settings_prompt_widget is not None:
             self._remove_upload_zone()
+            self._remove_settings_prompt()
         else:
             self._clear_inner_layout()
 
         # User bubble
-        filename = os.path.basename(path)
-        size_str = self._fmt_size(size)
-        self._render_uploaded_bubble({
-            'originalFilename': filename,
-            'sizeBytes': size,
-        })
+        self._add_upload_message(filename, size_str)
 
         # Upload progress card
         self._prog_card = self._make_progress_card(filename, size_str)
