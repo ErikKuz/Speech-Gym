@@ -4,14 +4,15 @@ from typing import Any, Dict, List, Optional
 
 from fastapi import FastAPI, UploadFile, File, HTTPException
 from pydantic import BaseModel
-from faster_whisper import WhisperModel
-
-import requests
+from faster_whisper import WhisperModel, download_model
 
 APP_NAME = "asr-service"
 
 # ======= Fixed ASR settings (не приходят из запроса) =======
 MODEL_SIZE = "medium"  # фиксируем medium
+MODEL_ID = os.getenv("ASR_MODEL_ID", MODEL_SIZE)
+MODEL_PATH = os.getenv("ASR_MODEL_PATH", f"/models/faster-whisper-{MODEL_SIZE}")
+LOCAL_FILES_ONLY = os.getenv("ASR_LOCAL_FILES_ONLY", "true").strip().lower() in {"1", "true", "yes", "on"}
 DEVICE = os.getenv("ASR_DEVICE", "cuda")  # "cuda" или "cpu"
 COMPUTE_TYPE = os.getenv("ASR_COMPUTE_TYPE", "float16")  # GPU: float16/int8_float16; CPU: int8/float32
 CPU_THREADS = int(os.getenv("ASR_CPU_THREADS", "4"))
@@ -56,13 +57,30 @@ def startup() -> None:
     cpu_threads = CPU_THREADS if DEVICE == "cpu" else 0
 
     try:
+        resolved_model_path = MODEL_PATH
+        model_bin_path = os.path.join(MODEL_PATH, "model.bin")
+        if not os.path.exists(model_bin_path):
+            if LOCAL_FILES_ONLY:
+                raise RuntimeError(
+                    f"Local ASR model was not found at {MODEL_PATH}. "
+                    "Build the image with the model preloaded or disable ASR_LOCAL_FILES_ONLY."
+                )
+            print(f"[asr-service] Downloading model {MODEL_ID} into {MODEL_PATH}", flush=True)
+            resolved_model_path = download_model(MODEL_ID, output_dir=MODEL_PATH, local_files_only=False)
+        print(
+            f"[asr-service] Initializing WhisperModel from {resolved_model_path} "
+            f"(device={DEVICE}, compute_type={COMPUTE_TYPE})",
+            flush=True,
+        )
         model = WhisperModel(
-            MODEL_SIZE,
+            resolved_model_path,
             device=DEVICE,
             compute_type=COMPUTE_TYPE,
             cpu_threads=cpu_threads,
             num_workers=NUM_WORKERS,
+            local_files_only=LOCAL_FILES_ONLY,
         )
+        print("[asr-service] WhisperModel initialized successfully", flush=True)
     except Exception as e:
         raise RuntimeError(f"Failed to init WhisperModel: {e}") from e
 
@@ -72,6 +90,10 @@ def health() -> Dict[str, Any]:
     return {
         "status": "ok",
         "model": MODEL_SIZE,
+        "model_id": MODEL_ID,
+        "model_path": MODEL_PATH,
+        "model_ready": model is not None,
+        "local_files_only": LOCAL_FILES_ONLY,
         "device": DEVICE,
         "compute_type": COMPUTE_TYPE,
         "num_workers": NUM_WORKERS,

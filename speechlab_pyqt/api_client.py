@@ -7,6 +7,10 @@ from typing import Any, Callable, Optional
 import requests
 from PyQt5.QtCore import QThread, pyqtSignal
 
+DEFAULT_TIMEOUT_SEC = int(os.getenv("SPEECHGYM_API_TIMEOUT_SEC", "120"))
+UPLOAD_TIMEOUT_SEC = int(os.getenv("SPEECHGYM_UPLOAD_TIMEOUT_SEC", str(max(DEFAULT_TIMEOUT_SEC, 300))))
+PDF_TIMEOUT_SEC = int(os.getenv("SPEECHGYM_PDF_TIMEOUT_SEC", str(max(DEFAULT_TIMEOUT_SEC, 180))))
+
 
 class ApiError(Exception):
     pass
@@ -30,6 +34,8 @@ class ApiClient:
         "file": "Файл",
     }
     _ERROR_TRANSLATIONS = {
+        "Invalid email or password.": "\u041d\u0435\u0432\u0435\u0440\u043d\u0430\u044f \u044d\u043b\u0435\u043a\u0442\u0440\u043e\u043d\u043d\u0430\u044f \u043f\u043e\u0447\u0442\u0430 \u0438\u043b\u0438 \u043f\u0430\u0440\u043e\u043b\u044c.",
+        "Request validation failed.": "\u041f\u0440\u043e\u0432\u0435\u0440\u044c\u0442\u0435 \u0437\u0430\u043f\u043e\u043b\u043d\u0435\u043d\u043d\u044b\u0435 \u043f\u043e\u043b\u044f.",
         "Invalid credentials.": "Неверная электронная почта или пароль.",
         "Refresh token is missing.": "Отсутствует refresh-токен.",
         "Unexpected PDF response.": "Сервер вернул неожиданный ответ при скачивании PDF.",
@@ -47,6 +53,9 @@ class ApiClient:
         "Unauthorized.": "Требуется повторный вход в аккаунт.",
     }
     _ERROR_SUBSTRINGS = (
+        ("must be a well-formed email address", "\u0423\u043a\u0430\u0436\u0438\u0442\u0435 \u043a\u043e\u0440\u0440\u0435\u043a\u0442\u043d\u044b\u0439 email-\u0430\u0434\u0440\u0435\u0441."),
+        ("must not be blank", "\u041f\u043e\u043b\u0435 \u043d\u0435 \u0434\u043e\u043b\u0436\u043d\u043e \u0431\u044b\u0442\u044c \u043f\u0443\u0441\u0442\u044b\u043c."),
+        ("size must be between 8 and 72", "\u0414\u043b\u0438\u043d\u0430 \u0434\u043e\u043b\u0436\u043d\u0430 \u0431\u044b\u0442\u044c \u043e\u0442 8 \u0434\u043e 72 \u0441\u0438\u043c\u0432\u043e\u043b\u043e\u0432."),
         ("Connection refused", "Сервис временно недоступен. Попробуйте снова через несколько секунд."),
         ("timed out", "Сервис не ответил вовремя. Попробуйте еще раз."),
         ("Failed to establish a new connection", "Не удалось подключиться к серверу."),
@@ -55,7 +64,7 @@ class ApiClient:
     )
 
     def __init__(self, base_url: Optional[str] = None):
-        self.base_url = (base_url or os.getenv("SPEECHGYM_API_URL", "http://localhost:8080/api/v1")).rstrip("/")
+        self.base_url = (base_url or os.getenv("SPEECHGYM_API_URL", "http://127.0.0.1:8080/api/v1")).rstrip("/")
         self.session = requests.Session()
         self.access_token: Optional[str] = None
         self.refresh_token: Optional[str] = None
@@ -158,7 +167,7 @@ class ApiClient:
                 "POST",
                 f"/sessions/{session_id}/uploads",
                 files={"file": (path.name, file_obj, content_type)},
-                timeout=300,
+                timeout=UPLOAD_TIMEOUT_SEC,
             )
 
     def create_job(self, session_id: str, upload_id: str, options: Optional[dict[str, Any]] = None) -> dict[str, Any]:
@@ -176,7 +185,7 @@ class ApiClient:
         return self._request("GET", f"/reports/{report_id}")
 
     def download_pdf(self, report_id: str) -> bytes:
-        data = self._request("GET", f"/reports/{report_id}/pdf", expect_json=False, timeout=120)
+        data = self._request("GET", f"/reports/{report_id}/pdf", expect_json=False, timeout=PDF_TIMEOUT_SEC)
         if not isinstance(data, bytes):
             raise ApiError("Сервер вернул неожиданный ответ при скачивании PDF.")
         return data
@@ -198,7 +207,7 @@ class ApiClient:
         *,
         auth: bool = True,
         expect_json: bool = True,
-        timeout: int = 30,
+        timeout: int = DEFAULT_TIMEOUT_SEC,
         headers: Optional[dict[str, str]] = None,
         **kwargs: Any,
     ) -> Any:

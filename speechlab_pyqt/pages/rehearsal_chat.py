@@ -995,12 +995,9 @@ class PitchReportWidget(QFrame):
 
         cards_row = QHBoxLayout()
         cards_row.setSpacing(12)
-<<<<<<< Updated upstream
-        cards_row.addWidget(self._make_context_card('Тип выступления', context.get('speechType') or 'Инвестиционный питч'), 0, Qt.AlignTop)
-        cards_row.addWidget(self._make_context_card('Лимит времени', context.get('timeLimit') or '5 минут'), 0, Qt.AlignTop)
-=======
+
+
         cards_row.addWidget(self._make_context_card('Лимит времени', context.get('timeLimit') or '5 минут'))
->>>>>>> Stashed changes
         cards_row.addWidget(
             self._make_context_card(
                 'Текущая длина',

@@ -8,18 +8,10 @@ public record ReportAnalysisRequest(
     @JsonProperty("whisper_json") Map<String, Object> whisperJson,
     @JsonProperty("pitch_type") String pitchType,
     @JsonProperty("target_duration_sec") int targetDurationSec,
-<<<<<<< Updated upstream
-    String notes
-) {
-    public ReportAnalysisRequest {
-        whisperJson = whisperJson == null ? Map.of() : Map.copyOf(whisperJson);
-        notes = notes == null ? "" : notes.trim();
-=======
     @JsonProperty("notes") String notes
 ) {
     public ReportAnalysisRequest {
         whisperJson = whisperJson == null ? Map.of() : Map.copyOf(whisperJson);
         notes = notes == null ? "" : notes;
->>>>>>> Stashed changes
     }
 }

@@ -30,16 +30,12 @@ public class SpeechReportHttpClient implements SpeechReportClient {
     }
 
     @Override
-<<<<<<< Updated upstream
-    public ReportAnalysisResponse generateReport(Map<String, Object> whisperJson, String pitchType, int targetDurationSec, String notes) {
-=======
     public ReportAnalysisResponse generateReport(
         Map<String, Object> whisperJson,
         String pitchType,
         int targetDurationSec,
         String notes
     ) {
->>>>>>> Stashed changes
         int maxAttempts = Math.max(1, properties.maxAttempts());
         Duration backoff = normalizeDuration(properties.initialBackoff());
         Duration maxBackoff = normalizeDuration(properties.maxBackoff());
@@ -79,16 +75,12 @@ public class SpeechReportHttpClient implements SpeechReportClient {
         throw new IllegalStateException("Unable to generate speech report.");
     }
 
-<<<<<<< Updated upstream
-    private ReportAnalysisResponse executeReport(Map<String, Object> whisperJson, String pitchType, int targetDurationSec, String notes) {
-=======
     private ReportAnalysisResponse executeReport(
         Map<String, Object> whisperJson,
         String pitchType,
         int targetDurationSec,
         String notes
     ) {
->>>>>>> Stashed changes
         ReportAnalysisResponse response = restClient.post()
             .uri(properties.reportPath())
             .contentType(MediaType.APPLICATION_JSON)
