@@ -68,6 +68,8 @@ app:
     exchange: speechgym.jobs
     queue: speechgym.jobs.queue
     routing-key: speechgym.jobs.process
+    post-asr-queue: speechgym.jobs.post-asr.queue
+    post-asr-routing-key: speechgym.jobs.post-asr
   storage:
     uploads-bucket: speechgym-uploads
     artifacts-bucket: speechgym-artifacts
