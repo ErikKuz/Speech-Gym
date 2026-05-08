@@ -70,8 +70,12 @@ services:
     environment:
       ASR_DEVICE: cpu
       ASR_COMPUTE_TYPE: int8
-      ASR_CPU_THREADS: 4
-      ASR_NUM_WORKERS: 1
+      ASR_CPU_THREADS: 2
+      ASR_NUM_WORKERS: 2
+      ASR_MAX_CONCURRENT_TRANSCRIBES: 2
+      HF_HOME: /models/huggingface
+    volumes:
+      - asr_model_cache:/models/huggingface
     ports:
       - "8000:8000"
     healthcheck:
@@ -111,6 +115,9 @@ services:
       APP_STORAGE_MINIO_SECRET_KEY: minioadmin
       APP_ASR_BASE_URL: http://asr-service:8000
       APP_REPORT_BASE_URL: http://speechgym-report-service:8000
+      SPRING_RABBITMQ_LISTENER_SIMPLE_CONCURRENCY: 2
+      SPRING_RABBITMQ_LISTENER_SIMPLE_MAX_CONCURRENCY: 2
+      SPRING_RABBITMQ_LISTENER_SIMPLE_PREFETCH: 1
     ports:
       - "8080:8080"
     depends_on:
@@ -130,3 +137,4 @@ services:
 volumes:
   postgres_data:
   minio_data:
+  asr_model_cache:

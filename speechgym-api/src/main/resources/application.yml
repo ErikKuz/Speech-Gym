@@ -21,6 +21,9 @@ spring:
     listener:
       simple:
         default-requeue-rejected: false
+        concurrency: 2
+        max-concurrency: 2
+        prefetch: 1
   servlet:
     multipart:
       max-file-size: 100MB
