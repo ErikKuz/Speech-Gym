@@ -18,12 +18,14 @@ import com.speechgym.common.error.UnprocessableEntityException;
 
 @Service
 public class AuthService {
-    private final UserRepository userRepository;
-    private final SubscriptionRepository subscriptionRepository;
-    private final PasswordEncoder passwordEncoder;
-    private final JwtTokenService jwtTokenService;
 
-    public AuthService(
+    private final UserRepository userRepository; // Сущность нашей БД // репозиторий для работы с пользователями
+    private final SubscriptionRepository subscriptionRepository; // Сущность нашей БД // репозиторий для работы с подпиской (Мы удалим, данный механизм у нас не реализован)
+
+    private final PasswordEncoder passwordEncoder; // Класс из Spring Security // Безопасная работа с паролями // хэши
+    private final JwtTokenService jwtTokenService; // Вся логика работы с JWT токенами
+
+    public AuthService( // Конструктор
         UserRepository userRepository,
         SubscriptionRepository subscriptionRepository,
         PasswordEncoder passwordEncoder,
@@ -35,22 +37,23 @@ public class AuthService {
         this.jwtTokenService = jwtTokenService;
     }
 
-    @Transactional
+    @Transactional // выполни этот метод внутри транзакции БД (То есть все функции изменения в БД выполняются в рамках одной транзакции, если хотя бы одна функция взаимодействия с БД не срабатывает)
     public AuthResponse register(RegisterRequest request) {
-        userRepository.findByEmailIgnoreCase(request.email()).ifPresent(existing -> {
+
+        userRepository.findByEmailIgnoreCase(request.email()).ifPresent(existing -> { // Если найдем пользователя с таким же email, выбросим исключение
             throw new ConflictException("User with this email already exists.");
         });
-        UserEntity user = new UserEntity();
-        user.setEmail(request.email().trim().toLowerCase());
-        user.setFullName(request.fullName().trim());
-        user.setPasswordHash(passwordEncoder.encode(request.password()));
-        user = userRepository.save(user);
+        UserEntity user = new UserEntity(); // Создаем новую сущность пользователя для добавления в БД
+        user.setEmail(request.email().trim().toLowerCase()); // Инициллизируем сеттером email у пользователя
+        user.setFullName(request.fullName().trim()); // Инициллизируем сеттером полное имя пользователя
+        user.setPasswordHash(passwordEncoder.encode(request.password())); // Инициализируем поле где хранится hash пароля пользователя //
+        user = userRepository.save(user); // Обращаемя к интерфейсу репозитория и сохраняем пользователя //
 
-        SubscriptionEntity subscription = new SubscriptionEntity();
-        subscription.setUserId(user.getId());
+        SubscriptionEntity subscription = new SubscriptionEntity(); // Это мы удалим, механизма подписки не будет
+        subscription.setUserId(user.getId()); 
         subscriptionRepository.save(subscription);
 
-        return toAuthResponse(user, jwtTokenService.issueTokens(user));
+        return toAuthResponse(user, jwtTokenService.issueTokens(user)); // С помощью метода  toAuthResponse() Приводим в нужный формат ответа
     }
 
     @Transactional(readOnly = true)

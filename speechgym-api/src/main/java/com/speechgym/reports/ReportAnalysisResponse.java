@@ -12,7 +12,7 @@ public record ReportAnalysisResponse(
 ) {
     public ReportAnalysisResponse {
         report = report == null ? new ReportPayload(null, null, null) : report;
-        meta = meta == null ? new Meta(null, null, null, null, null, null) : meta;
+        meta = meta == null ? new Meta(null, null, null, null, null, null, null, null) : meta;
     }
 
     @JsonIgnoreProperties(ignoreUnknown = true)
@@ -98,6 +98,8 @@ public record ReportAnalysisResponse(
         @JsonProperty("target_duration_sec") Integer targetDurationSec,
         @JsonProperty("actual_duration_sec") Double actualDurationSec,
         @JsonProperty("actual_duration") String actualDuration,
+        @JsonProperty("actual_speaking_rate_wpm") Integer actualSpeakingRateWpm,
+        @JsonProperty("notes_used") Boolean notesUsed,
         String model
     ) {
     }

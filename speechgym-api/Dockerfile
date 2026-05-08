@@ -25,6 +25,10 @@ FROM eclipse-temurin:21-jre
 
 WORKDIR /app
 
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends fontconfig fonts-dejavu-core \
+    && rm -rf /var/lib/apt/lists/*
+
 # Папка под локальные аудиофайлы, если пока используешь файловую систему
 RUN mkdir -p /data/audio
 

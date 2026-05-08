@@ -2,12 +2,12 @@
 
 from __future__ import annotations
 
-import json
 import os
 import re
 import time
 import uuid
 from dataclasses import dataclass
+from html.parser import HTMLParser
 from typing import Any, Dict, List, Optional
 
 import requests
@@ -33,13 +33,11 @@ app = FastAPI(
 # ============================================================
 
 class ReportRequest(BaseModel):
+    model_config = {"extra": "ignore"}
+
     whisper_json: Dict[str, Any] = Field(
         ...,
-        description="JSON от Whisper / faster-whisper: text, segments, language.",
-    )
-    pitch_type: str = Field(
-        default="investor_pitch",
-        description="Тип pitch: investor_pitch, demo_day_pitch, grant_pitch и т.д.",
+        description="JSON от Whisper / faster-whisper: text, segments.",
     )
     target_duration_sec: int = Field(
         default=180,
@@ -47,6 +45,23 @@ class ReportRequest(BaseModel):
         le=1800,
         description="Целевая длительность pitch в секундах.",
     )
+    notes: str = Field(
+        default="",
+        description="Заметки пользователя, которые нужно учитывать при новой версии pitch.",
+    )
+
+
+DEFAULT_SPEAKING_RATE_WPM = 145
+MIN_REASONABLE_SPEAKING_RATE_WPM = 90
+MAX_REASONABLE_SPEAKING_RATE_WPM = 220
+SPEAKING_RATE_SPREAD_RATIO = 0.10
+MIN_SPEAKING_RATE_SPREAD_WPM = 8
+MAX_SPEAKING_RATE_SPREAD_WPM = 18
+TARGET_CLOSE_TO_ACTUAL_RATIO = 0.15
+MIN_ALLOWED_WORD_LOSS = 40
+MAX_ALLOWED_WORD_LOSS = 140
+SOURCE_VOLUME_BUFFER_WORDS = 80
+MAX_USER_NOTES_CHARS = 2000
 
 
 # ============================================================
@@ -482,9 +497,9 @@ PASSPORT_SYSTEM_PROMPT = """
 
 Используй:
 - текст pitch;
-- тип pitch;
 - целевое время выступления;
 - фактическую длительность;
+- заметки пользователя, если они есть;
 - knowledge_context.
 
 Опирайся на knowledge_context, но не цитируй его и не упоминай методологию.
@@ -510,16 +525,26 @@ PASSPORT_SYSTEM_PROMPT = """
 - не добавляй “короткий диагноз”;
 - не генерируй новую версию pitch.
 
-Верни ответ строго в JSON без markdown.
+Верни только текст в тегах, без JSON, markdown и пояснений вне тегов.
 
-JSON-структура ответа:
-{
-  "passport_pitch": {
-    "strengths": ["", "", ""],
-    "blockers": ["", "", ""],
-    "next_version_changes": ["", "", ""]
-  }
-}
+Структура ответа:
+<passport_pitch>
+  <strengths>
+    <item>...</item>
+    <item>...</item>
+    <item>...</item>
+  </strengths>
+  <blockers>
+    <item>...</item>
+    <item>...</item>
+    <item>...</item>
+  </blockers>
+  <next_version_changes>
+    <item>...</item>
+    <item>...</item>
+    <item>...</item>
+  </next_version_changes>
+</passport_pitch>
 """.strip()
 
 NEXT_PITCH_DRAFT_SYSTEM_PROMPT = """
@@ -529,7 +554,7 @@ NEXT_PITCH_DRAFT_SYSTEM_PROMPT = """
 
 Важно:
 - не дели текст на смысловые блоки;
-- не возвращай pitch как набор JSON-блоков;
+- не возвращай pitch как набор блоков;
 - можно использовать короткие устные переходы внутри текста: "Почему именно сейчас?", "Что мы сделали?", "Как мы зарабатываем?", "Теперь к traction";
 - не пиши список тезисов;
 - не делай конспект;
@@ -552,6 +577,7 @@ NEXT_PITCH_DRAFT_SYSTEM_PROMPT = """
 - knowledge_context;
 - целевую длительность;
 - фактическую длительность текущей версии;
+- заметки пользователя, если они есть;
 - length_requirements.
 
 Новая версия должна:
@@ -582,11 +608,14 @@ NEXT_PITCH_DRAFT_SYSTEM_PROMPT = """
 
 Контроль объема:
 - ориентируйся на length_requirements.target_word_count_range;
+- оптимальная длина — length_requirements.target_word_count слов;
 - length_requirements.target_word_count_range.min — это минимально приемлемый объем;
+- length_requirements.target_word_count_range.max — это верхняя граница, выше нее текст будет слишком длинным;
+- ответ вне диапазона length_requirements.target_word_count_range будет отклонен;
 - текст не должен быть короче минимального объема;
 - если length_requirements.preserve_source_volume равно true, новая версия должна быть близка к исходнику по числу слов;
 - можно тратить много токенов на полноценное раскрытие содержания: качество и полнота важнее экономии длины ответа;
-- считай, что устный pitch обычно звучит со скоростью 130-165 слов в минуту;
+- используй рассчитанную скорость речи пользователя и допустимый диапазон из length_requirements.target_speaking_rate_wpm_range;
 - для pitch на несколько минут нужен полноценный текст, а не короткая аннотация.
 
 Не выдумывай новые факты.
@@ -603,15 +632,16 @@ NEXT_PITCH_DRAFT_SYSTEM_PROMPT = """
 - дофамин
 - норадреналин
 
-Верни ответ строго в JSON без markdown.
+Верни только текст в тегах, без JSON, markdown и пояснений вне тегов.
 
-JSON-структура ответа:
-{
-  "next_pitch_draft": {
-    "title": "Следующая версия pitch",
-    "full_text": ""
-  }
-}
+Структура ответа:
+<next_pitch_draft>
+  <title>Следующая версия pitch</title>
+  <full_text>
+    <paragraph>...</paragraph>
+    <paragraph>...</paragraph>
+  </full_text>
+</next_pitch_draft>
 """.strip()
 
 
@@ -630,12 +660,15 @@ NEXT_PITCH_EXPAND_SYSTEM_PROMPT = """
 Обязательные требования:
 - верни цельный устный pitch, а не тезисы;
 - не дели текст на блоки;
-- не возвращай pitch как набор JSON-блоков;
+- не возвращай pitch как набор блоков;
 - можно использовать короткие устные переходы внутри текста, если они делают речь понятнее;
 - "кратко" означает без лишнего шума, а не без содержания;
 - раскрывай рекомендации полноценными фрагментами речи, не заменяй их короткими тезисами;
 - не сокращай доказательства, цифры, бизнес-логику и ask;
 - сделай текст не короче length_requirements.target_word_count_range.min слов;
+- оптимально попади в length_requirements.target_word_count слов;
+- не выходи выше length_requirements.target_word_count_range.max слов;
+- ответ вне диапазона length_requirements.target_word_count_range будет отклонен;
 - если length_requirements.preserve_source_volume равно true, не теряй больше length_requirements.max_allowed_word_loss слов относительно исходного pitch;
 - используй большой токен-бюджет: лучше дать полную версию pitch, чем слишком короткий пересказ;
 - ориентируйся на 9-12 содержательных абзацев для pitch длительностью около 4-5 минут;
@@ -647,15 +680,54 @@ NEXT_PITCH_EXPAND_SYSTEM_PROMPT = """
 Не выдумывай новые факты.
 Не используй методологические термины.
 
-Верни ответ строго в JSON без markdown.
+Верни только текст в тегах, без JSON, markdown и пояснений вне тегов.
 
-JSON-структура ответа:
-{
-  "next_pitch_draft": {
-    "title": "Следующая версия pitch",
-    "full_text": ""
-  }
-}
+Структура ответа:
+<next_pitch_draft>
+  <title>Следующая версия pitch</title>
+  <full_text>
+    <paragraph>...</paragraph>
+    <paragraph>...</paragraph>
+  </full_text>
+</next_pitch_draft>
+""".strip()
+
+
+NEXT_PITCH_RESIZE_SYSTEM_PROMPT = """
+Ты получил черновик новой версии pitch, но его объем не попал в целевой диапазон.
+
+Твоя задача — переписать этот же pitch одним связным устным текстом так, чтобы он попал в length_requirements.target_word_count_range.
+Оптимальная длина — length_requirements.target_word_count слов.
+
+Используй:
+- исходный pitch;
+- паспорт pitch;
+- knowledge_context;
+- length_requirements;
+- rejected_draft как черновик, который нужно отрегулировать по длине;
+- rejection_reason как точное объяснение проблемы объема.
+
+Правила:
+- если черновик слишком короткий, расширяй смысловые блоки полноценными устными фразами;
+- если черновик слишком длинный, сокращай повторы, сбивки, длинные вводные и лишнюю детализацию;
+- ответ вне диапазона length_requirements.target_word_count_range будет отклонен;
+- не выкидывай доказательства, цифры, клиентов, внедрения, экономику, ask и важную бизнес-логику;
+- не добавляй новые факты;
+- сохрани живую устную речь, а не список тезисов;
+- не дели итоговый pitch на смысловые блоки.
+
+Не используй методологические термины.
+
+Верни только текст в тегах, без JSON, markdown и пояснений вне тегов.
+
+Структура ответа:
+<next_pitch_draft>
+  <title>Следующая версия pitch</title>
+  <full_text>
+    <paragraph>...</paragraph>
+    <paragraph>...</paragraph>
+  </full_text>
+</next_pitch_draft>
 """.strip()
 
 
@@ -674,18 +746,21 @@ NEXT_PITCH_LABELS_SYSTEM_PROMPT = """
 - сделай 5-8 блоков, если текст это позволяет;
 - full_text в ответе должен совпадать с переданным full_text.
 
-Верни ответ строго в JSON без markdown.
+Верни только текст в тегах, без JSON, markdown и пояснений вне тегов.
 
-JSON-структура ответа:
-{
-  "next_pitch": {
-    "title": "Следующая версия pitch",
-    "blocks": [
-      {"label": "Вступление", "text": ""}
-    ],
-    "full_text": ""
-  }
-}
+Структура ответа:
+<next_pitch>
+  <title>Следующая версия pitch</title>
+  <blocks>
+    <block>
+      <label>Вступление</label>
+      <text>...</text>
+    </block>
+  </blocks>
+  <full_text>
+    <paragraph>...</paragraph>
+  </full_text>
+</next_pitch>
 """.strip()
 
 RECOMMENDATIONS_SYSTEM_PROMPT = """
@@ -701,6 +776,7 @@ RECOMMENDATIONS_SYSTEM_PROMPT = """
 - новую версию pitch;
 - целевое время;
 - фактическую длительность;
+- заметки пользователя, если они есть;
 - knowledge_context.
 
 Для каждого изменения покажи:
@@ -725,27 +801,30 @@ RECOMMENDATIONS_SYSTEM_PROMPT = """
 - дофамин
 - норадреналин
 
-Верни ответ строго в JSON без markdown.
+Верни только текст в тегах, без JSON, markdown и пояснений вне тегов.
 
-JSON-структура ответа:
-{
-  "recommendations": {
-    "summary": ["", "", "", ""],
-    "changes": [
-      {
-        "title": "",
-        "before": "",
-        "after": "",
-        "why_before_weaker": "",
-        "why_after_better": "",
-        "audience_effect": {
-          "understands_better": "",
-          "feels_more": ""
-        }
-      }
-    ]
-  }
-}
+Структура ответа:
+<recommendations>
+  <summary>
+    <item>...</item>
+    <item>...</item>
+    <item>...</item>
+    <item>...</item>
+  </summary>
+  <changes>
+    <change>
+      <title>...</title>
+      <before>...</before>
+      <after>...</after>
+      <why_before_weaker>...</why_before_weaker>
+      <why_after_better>...</why_after_better>
+      <audience_effect>
+        <understands_better>...</understands_better>
+        <feels_more>...</feels_more>
+      </audience_effect>
+    </change>
+  </changes>
+</recommendations>
 """.strip()
 
 
@@ -763,6 +842,60 @@ def count_words(text: str) -> int:
     return len(re.findall(r"[A-Za-zА-Яа-яЁё0-9]+(?:[-'][A-Za-zА-Яа-яЁё0-9]+)?", text))
 
 
+def clamp_int(value: int, min_value: int, max_value: int) -> int:
+    return max(min_value, min(max_value, value))
+
+
+def calculate_wpm(word_count: int, duration_sec: Optional[float]) -> int:
+    if word_count <= 0 or not duration_sec or duration_sec <= 0:
+        return DEFAULT_SPEAKING_RATE_WPM
+    raw_wpm = int(round((word_count * 60.0) / duration_sec))
+    return clamp_int(raw_wpm, MIN_REASONABLE_SPEAKING_RATE_WPM, MAX_REASONABLE_SPEAKING_RATE_WPM)
+
+
+def speaking_rate_range(actual_wpm: int) -> Dict[str, int]:
+    spread = clamp_int(
+        int(round(actual_wpm * SPEAKING_RATE_SPREAD_RATIO)),
+        MIN_SPEAKING_RATE_SPREAD_WPM,
+        MAX_SPEAKING_RATE_SPREAD_WPM,
+    )
+    min_wpm = clamp_int(actual_wpm - spread, MIN_REASONABLE_SPEAKING_RATE_WPM, MAX_REASONABLE_SPEAKING_RATE_WPM)
+    max_wpm = clamp_int(actual_wpm + spread, MIN_REASONABLE_SPEAKING_RATE_WPM, MAX_REASONABLE_SPEAKING_RATE_WPM)
+    if min_wpm >= max_wpm:
+        max_wpm = min(MAX_REASONABLE_SPEAKING_RATE_WPM, min_wpm + MIN_SPEAKING_RATE_SPREAD_WPM)
+    return {
+        "min": min_wpm,
+        "max": max_wpm,
+    }
+
+
+def clean_user_notes(value: Any) -> str:
+    notes = normalize_text(str(value or ""))
+    return notes[:MAX_USER_NOTES_CHARS]
+
+
+def extract_user_notes(request_notes: str, whisper_json: Dict[str, Any]) -> str:
+    candidates: List[Any] = [
+        request_notes,
+        whisper_json.get("notes"),
+        whisper_json.get("user_notes"),
+        whisper_json.get("session_notes"),
+    ]
+    metadata = whisper_json.get("metadata")
+    if isinstance(metadata, dict):
+        candidates.extend([
+            metadata.get("notes"),
+            metadata.get("user_notes"),
+            metadata.get("session_notes"),
+        ])
+
+    for candidate in candidates:
+        notes = clean_user_notes(candidate)
+        if notes:
+            return notes
+    return ""
+
+# Вычисляем длительность всего выступления
 def estimate_actual_duration_sec(whisper_json: Dict[str, Any]) -> Optional[float]:
     segments = whisper_json.get("segments") or []
 
@@ -790,7 +923,7 @@ def estimate_actual_duration_sec(whisper_json: Dict[str, Any]) -> Optional[float
 
     return round(max(0.0, end - start), 2)
 
-
+# Выводим данные о текущем выступлении в формате HH:MM:SS, тип строка
 def format_duration(duration_sec: Optional[float]) -> Optional[str]:
     if duration_sec is None:
         return None
@@ -804,23 +937,29 @@ def format_duration(duration_sec: Optional[float]) -> Optional[str]:
 
     return f"{minutes}:{seconds:02d}"
 
-
+# Формируем требования на основании текущей и целевой длины pitch
 def build_length_requirements(pitch: Dict[str, Any]) -> Dict[str, Any]:
     target_duration_sec = pitch.get("target_duration_sec") or 0
     actual_duration_sec = pitch.get("actual_duration_sec")
     transcript = str(pitch.get("transcript") or "")
     source_word_count = count_words(transcript)
+    actual_wpm = calculate_wpm(source_word_count, actual_duration_sec)
+    wpm_range = speaking_rate_range(actual_wpm)
 
     target_minutes = max(0.5, float(target_duration_sec) / 60.0)
-    min_words = int(round(target_minutes * 130))
-    max_words = int(round(target_minutes * 165))
-    max_allowed_word_loss = 80
+    min_words = int(round(target_minutes * wpm_range["min"]))
+    max_words = int(round(target_minutes * wpm_range["max"]))
+    max_allowed_word_loss = clamp_int(
+        int(round(source_word_count * 0.12)),
+        MIN_ALLOWED_WORD_LOSS,
+        MAX_ALLOWED_WORD_LOSS,
+    )
     preserve_source_volume = False
 
-    if actual_duration_sec and abs(float(target_duration_sec) - float(actual_duration_sec)) <= float(actual_duration_sec) * 0.15:
+    if actual_duration_sec and abs(float(target_duration_sec) - float(actual_duration_sec)) <= float(actual_duration_sec) * TARGET_CLOSE_TO_ACTUAL_RATIO:
         preserve_source_volume = True
         min_words = max(min_words, max(1, source_word_count - max_allowed_word_loss))
-        max_words = max(max_words, source_word_count + 80)
+        max_words = max(max_words, source_word_count + SOURCE_VOLUME_BUFFER_WORDS)
         guidance = (
             "Целевое время близко к длительности исходной версии: новая версия должна быть сопоставимой "
             "по объему с исходным pitch, но яснее и собраннее. Нельзя сильно укорачивать содержание: "
@@ -834,7 +973,7 @@ def build_length_requirements(pitch: Dict[str, Any]) -> Dict[str, Any]:
     else:
         preserve_source_volume = True
         min_words = max(min_words, max(1, source_word_count - max_allowed_word_loss))
-        max_words = max(max_words, source_word_count + 120)
+        max_words = max(max_words, source_word_count + SOURCE_VOLUME_BUFFER_WORDS)
         guidance = (
             "Целевое время не требует сильного сжатия: раскрывай мысли полноценными устными фразами, "
             "не превращай pitch в краткий пересказ и не теряй содержание исходной версии."
@@ -842,25 +981,24 @@ def build_length_requirements(pitch: Dict[str, Any]) -> Dict[str, Any]:
 
     return {
         "source_word_count": source_word_count,
+        "actual_speaking_rate_wpm": actual_wpm,
+        "target_word_count": int(round((min_words + max_words) / 2)),
         "target_word_count_range": {
             "min": min_words,
             "max": max_words,
         },
-        "target_speaking_rate_wpm_range": {
-            "min": 130,
-            "max": 165,
-        },
+        "target_speaking_rate_wpm_range": wpm_range,
         "min_words_is_required": True,
         "preserve_source_volume": preserve_source_volume,
         "max_allowed_word_loss": max_allowed_word_loss,
         "guidance": guidance,
     }
 
-
+# Делаем PITCH на вход
 def build_pitch_input(
     whisper_json: Dict[str, Any],
-    pitch_type: str,
     target_duration_sec: int,
+    notes: str,
 ) -> Dict[str, Any]:
     text = normalize_text(str(whisper_json.get("text") or ""))
 
@@ -874,15 +1012,130 @@ def build_pitch_input(
         )
 
     actual_duration_sec = estimate_actual_duration_sec(whisper_json)
+    source_word_count = count_words(text)
+    actual_wpm = calculate_wpm(source_word_count, actual_duration_sec)
 
     return {
         "transcript": text,
-        "pitch_type": pitch_type,
         "target_duration_sec": target_duration_sec,
         "actual_duration_sec": actual_duration_sec,
         "actual_duration": format_duration(actual_duration_sec),
-        "language": whisper_json.get("language", "ru"),
+        "source_word_count": source_word_count,
+        "actual_speaking_rate_wpm": actual_wpm,
+        "user_notes": notes,
     }
+
+
+MODEL_INPUT_LABELS = {
+    "pitch": "Текущий pitch",
+    "transcript": "Текст текущего pitch",
+    "target_duration_sec": "Целевая длительность, секунд",
+    "actual_duration_sec": "Фактическая длительность, секунд",
+    "actual_duration": "Фактическая длительность",
+    "source_word_count": "Количество слов в текущем pitch",
+    "actual_speaking_rate_wpm": "Фактическая скорость речи, слов в минуту",
+    "user_notes": "Заметки пользователя",
+    "passport_pitch": "Паспорт pitch",
+    "strengths": "Что уже сильное",
+    "blockers": "Что мешает сейчас",
+    "next_version_changes": "Что изменится в следующей версии",
+    "next_pitch": "Следующая версия pitch",
+    "next_pitch_draft": "Черновик следующей версии pitch",
+    "title": "Название",
+    "full_text": "Полный текст",
+    "blocks": "Смысловые блоки",
+    "label": "Название блока",
+    "text": "Текст",
+    "knowledge_context": "Контекст методики",
+    "length_requirements": "Требования к длине",
+    "target_word_count": "Оптимальное количество слов",
+    "target_word_count_range": "Целевой диапазон слов",
+    "target_speaking_rate_wpm_range": "Целевой диапазон скорости речи, слов в минуту",
+    "min": "Минимум",
+    "max": "Максимум",
+    "min_words_is_required": "Минимальное количество слов обязательно",
+    "preserve_source_volume": "Сохранять объем исходника",
+    "max_allowed_word_loss": "Максимальная допустимая потеря слов",
+    "guidance": "Инструкция по объему",
+    "rejected_draft": "Отклоненный черновик",
+    "adjustment_attempt": "Попытка настройки длины",
+    "rejection_reason": "Причина отклонения",
+    "recommendations": "Рекомендации",
+    "summary": "Главные улучшения",
+    "changes": "Изменения",
+    "before": "Было",
+    "after": "Стало",
+    "why_before_weaker": "Почему старый вариант слабее",
+    "why_after_better": "Почему новый вариант лучше",
+    "audience_effect": "Эффект для аудитории",
+    "understands_better": "Что аудитория понимает лучше",
+    "feels_more": "Что аудитория чувствует сильнее",
+}
+
+
+def model_input_label(key: str) -> str:
+    return MODEL_INPUT_LABELS.get(key, key.replace("_", " "))
+
+
+def format_model_input(payload: Dict[str, Any]) -> str:
+    lines = ["Данные для задачи:"]
+    lines.extend(render_model_value(payload, indent=0))
+    return "\n".join(line for line in lines if line is not None)
+
+
+def render_model_value(value: Any, indent: int = 0) -> List[str]:
+    pad = "  " * indent
+
+    if isinstance(value, dict):
+        lines: List[str] = []
+        for key, item in value.items():
+            if is_blank_model_value(item):
+                continue
+            label = model_input_label(str(key))
+            if isinstance(item, (dict, list)):
+                lines.append(f"{pad}{label}:")
+                lines.extend(render_model_value(item, indent + 1))
+            else:
+                lines.append(f"{pad}{label}: {format_model_scalar(item)}")
+        return lines
+
+    if isinstance(value, list):
+        lines = []
+        for index, item in enumerate(value, start=1):
+            if is_blank_model_value(item):
+                continue
+            if isinstance(item, dict) and ("title" in item or "content" in item):
+                title = normalize_text(str(item.get("title") or f"Пункт {index}"))
+                content = normalize_text(str(item.get("content") or ""))
+                lines.append(f"{pad}{index}. {title}")
+                if content:
+                    lines.append(f"{pad}   {content}")
+            elif isinstance(item, dict):
+                lines.append(f"{pad}{index}.")
+                lines.extend(render_model_value(item, indent + 1))
+            else:
+                lines.append(f"{pad}- {format_model_scalar(item)}")
+        return lines
+
+    if is_blank_model_value(value):
+        return []
+    return [f"{pad}{format_model_scalar(value)}"]
+
+
+def is_blank_model_value(value: Any) -> bool:
+    if value is None:
+        return True
+    if isinstance(value, str):
+        return not value.strip()
+    if isinstance(value, (list, dict)):
+        return not value
+    return False
+
+
+def format_model_scalar(value: Any) -> str:
+    if isinstance(value, bool):
+        return "да" if value else "нет"
+    return normalize_text(str(value))
 
 
 # ============================================================
@@ -890,7 +1143,7 @@ def build_pitch_input(
 # ============================================================
 
 @dataclass
-class GigaChatConfig:
+class GigaChatConfig: # Конфигурация нашего Гига Чат
     auth_key: str
     scope: str
     model: str
@@ -902,13 +1155,13 @@ class GigaChatConfig:
     max_tokens: int
 
 
-class GigaChatClient:
+class GigaChatClient: # Клиент нашего Гига Чат # Используем этот класс только для отправки сообщений
     def __init__(self, config: GigaChatConfig):
-        self.config = config
-        self._access_token: Optional[str] = None
-        self._expires_at_ms: int = 0
+        self.config = config # Загружаем конфиг нашего ГигаЧат 
+        self._access_token: Optional[str] = None # Токен доступа
+        self._expires_at_ms: int = 0 # Истекает токен доступа
 
-    def _auth_header_value(self) -> str:
+    def _auth_header_value(self) -> str: # Получаем текущий токен доступа
         value = self.config.auth_key.strip()
 
         if value.lower().startswith("basic "):
@@ -916,7 +1169,7 @@ class GigaChatClient:
 
         return f"Basic {value}"
 
-    def get_access_token(self) -> str:
+    def get_access_token(self) -> str: # Отправить запрос к Гига Чат, чтобы получить токен доступа
         now_ms = int(time.time() * 1000)
 
         if self._access_token and now_ms < self._expires_at_ms - 60_000:
@@ -965,11 +1218,11 @@ class GigaChatClient:
 
         return self._access_token
 
-    def chat_json(
+    def chat_tagged(
         self,
         system_prompt: str,
         user_payload: Dict[str, Any],
-        expected_root_key: str,
+        expected_root_tag: str,
     ) -> Dict[str, Any]:
         messages = [
             {
@@ -978,23 +1231,22 @@ class GigaChatClient:
             },
             {
                 "role": "user",
-                "content": json.dumps(user_payload, ensure_ascii=False, indent=2),
+                "content": format_model_input(user_payload),
             },
         ]
 
         raw_text = self._chat_text(messages)
 
         try:
-            data = parse_json_from_model(raw_text)
-            validate_root_key(data, expected_root_key)
-            return data
+            return parse_tagged_model_response(raw_text, expected_root_tag)
         except Exception:
             repair_messages = [
                 {
                     "role": "system",
                     "content": (
-                        "Исправь ответ. Верни только валидный JSON без markdown и без пояснений. "
-                        f"Обязательный корневой ключ: {expected_root_key}."
+                        "Исправь ответ. Верни только обычный текст в XML-подобных тегах, "
+                        "без JSON, markdown и пояснений вне тегов. "
+                        f"Обязательный корневой тег: <{expected_root_tag}>."
                     ),
                 },
                 {
@@ -1004,11 +1256,9 @@ class GigaChatClient:
             ]
 
             repaired_text = self._chat_text(repair_messages)
-            data = parse_json_from_model(repaired_text)
-            validate_root_key(data, expected_root_key)
-            return data
+            return parse_tagged_model_response(repaired_text, expected_root_tag)
 
-    def _chat_text(self, messages: List[Dict[str, str]]) -> str:
+    def _chat_text(self, messages: List[Dict[str, str]]) -> str: # Функция отправки сообщения в модель по API
         token = self.get_access_token()
 
         url = f"{self.config.base_url.rstrip('/')}/chat/completions"
@@ -1050,46 +1300,242 @@ class GigaChatClient:
 
 
 # ============================================================
-# 7. JSON VALIDATION
+# 7. TAGGED RESPONSE PARSING AND VALIDATION
 # ============================================================
 
-def parse_json_from_model(text: str) -> Dict[str, Any]:
+@dataclass
+class TaggedNode:
+    tag: str
+    parts: List[Any]
+
+
+class TaggedResponseParser(HTMLParser):
+    def __init__(self):
+        super().__init__(convert_charrefs=True)
+        self.root = TaggedNode("root", [])
+        self.stack: List[TaggedNode] = [self.root]
+
+    def handle_starttag(self, tag: str, attrs: List[tuple[str, Optional[str]]]) -> None:
+        node = TaggedNode(tag.lower(), [])
+        self.stack[-1].parts.append(node)
+        self.stack.append(node)
+
+    def handle_endtag(self, tag: str) -> None:
+        target = tag.lower()
+        for index in range(len(self.stack) - 1, 0, -1):
+            if self.stack[index].tag == target:
+                del self.stack[index:]
+                return
+
+    def handle_data(self, data: str) -> None:
+        if data:
+            self.stack[-1].parts.append(data)
+
+
+def parse_tagged_model_response(text: str, expected_root_tag: str) -> Dict[str, Any]:
+    parser = TaggedResponseParser()
+    parser.feed(strip_code_fence(text))
+    root = find_first_tag(parser.root, expected_root_tag)
+    if root is None:
+        raise ValueError(f"Expected root tag <{expected_root_tag}> not found in model response: {text[:500]}")
+
+    if expected_root_tag == "passport_pitch":
+        return parse_passport_tags(root)
+    if expected_root_tag == "next_pitch_draft":
+        return parse_next_pitch_draft_tags(root)
+    if expected_root_tag == "next_pitch":
+        return parse_next_pitch_tags(root)
+    if expected_root_tag == "recommendations":
+        return parse_recommendations_tags(root)
+
+    raise ValueError(f"Unsupported tagged response root: {expected_root_tag}")
+
+
+def strip_code_fence(text: str) -> str:
     cleaned = text.strip()
-
-    cleaned = re.sub(r"^```(?:json)?\s*", "", cleaned, flags=re.IGNORECASE)
+    cleaned = re.sub(r"^```(?:xml|html)?\s*", "", cleaned, flags=re.IGNORECASE)
     cleaned = re.sub(r"\s*```$", "", cleaned)
-
-    try:
-        return json.loads(cleaned)
-    except json.JSONDecodeError:
-        start = cleaned.find("{")
-
-        if start == -1:
-            raise ValueError(
-                f"JSON object not found in model response: {text[:500]}"
-            )
-
-        decoder = json.JSONDecoder()
-
-        try:
-            data, _ = decoder.raw_decode(cleaned[start:])
-            return data
-        except json.JSONDecodeError:
-            end = cleaned.rfind("}")
-
-            if end == -1 or end <= start:
-                raise ValueError(
-                    f"JSON object not found in model response: {text[:500]}"
-                )
-
-            return json.loads(cleaned[start:end + 1])
+    return cleaned
 
 
-def validate_root_key(data: Dict[str, Any], root_key: str) -> None:
-    if root_key not in data:
-        raise ValueError(
-            f"Expected root key '{root_key}', got keys: {list(data.keys())}"
-        )
+def find_first_tag(node: TaggedNode, tag: str) -> Optional[TaggedNode]:
+    target = tag.lower()
+    if node.tag == target:
+        return node
+    for part in node.parts:
+        if isinstance(part, TaggedNode):
+            found = find_first_tag(part, target)
+            if found is not None:
+                return found
+    return None
+
+
+def child_tags(node: TaggedNode, tag: str) -> List[TaggedNode]:
+    target = tag.lower()
+    return [
+        part
+        for part in node.parts
+        if isinstance(part, TaggedNode) and part.tag == target
+    ]
+
+
+def first_child_tag(node: TaggedNode, tag: str) -> Optional[TaggedNode]:
+    children = child_tags(node, tag)
+    return children[0] if children else None
+
+
+def direct_or_descendant_child(node: TaggedNode, tag: str) -> Optional[TaggedNode]:
+    direct = first_child_tag(node, tag)
+    if direct is not None:
+        return direct
+    return find_first_tag(node, tag)
+
+
+def tagged_text(node: Optional[TaggedNode]) -> str:
+    if node is None:
+        return ""
+
+    chunks: List[str] = []
+    for part in node.parts:
+        if isinstance(part, TaggedNode):
+            chunks.append(tagged_text(part))
+        else:
+            chunks.append(str(part))
+    return normalize_text(" ".join(chunk for chunk in chunks if chunk))
+
+
+def paragraph_text(node: Optional[TaggedNode]) -> str:
+    if node is None:
+        return ""
+    paragraphs = [
+        tagged_text(paragraph)
+        for paragraph in child_tags(node, "paragraph")
+        if tagged_text(paragraph)
+    ]
+    if paragraphs:
+        return "\n\n".join(paragraphs)
+    return tagged_text(node)
+
+
+def node_text_without_child_tags(node: Optional[TaggedNode], skipped_tags: set[str]) -> str:
+    if node is None:
+        return ""
+
+    chunks: List[str] = []
+    for part in node.parts:
+        if isinstance(part, TaggedNode):
+            if part.tag in skipped_tags:
+                continue
+            chunks.append(node_text_without_child_tags(part, skipped_tags))
+        else:
+            chunks.append(str(part))
+    return normalize_text(" ".join(chunk for chunk in chunks if chunk))
+
+
+def tagged_items(node: Optional[TaggedNode], limit: int) -> List[str]:
+    if node is None:
+        return []
+
+    items = [
+        tagged_text(item)
+        for item in child_tags(node, "item")
+        if tagged_text(item)
+    ]
+    if items:
+        return items[:limit]
+
+    raw_text = tagged_text(node)
+    if not raw_text:
+        return []
+    fallback_items = [
+        normalize_text(item)
+        for item in re.split(r"(?:\n|;|•|- )+", raw_text)
+        if normalize_text(item)
+    ]
+    return fallback_items[:limit]
+
+
+def parse_passport_tags(root: TaggedNode) -> Dict[str, Any]:
+    return {
+        "passport_pitch": {
+            "strengths": tagged_items(direct_or_descendant_child(root, "strengths"), 3),
+            "blockers": tagged_items(direct_or_descendant_child(root, "blockers"), 3),
+            "next_version_changes": tagged_items(direct_or_descendant_child(root, "next_version_changes"), 3),
+        }
+    }
+
+
+def parse_next_pitch_draft_tags(root: TaggedNode) -> Dict[str, Any]:
+    full_text = paragraph_text(direct_or_descendant_child(root, "full_text"))
+    if not full_text:
+        full_text = paragraph_text(direct_or_descendant_child(root, "text"))
+    if not full_text:
+        full_text = paragraph_text(direct_or_descendant_child(root, "content"))
+    if not full_text:
+        full_text = node_text_without_child_tags(root, {"title"})
+
+    return {
+        "next_pitch_draft": {
+            "title": tagged_text(direct_or_descendant_child(root, "title")) or "Следующая версия pitch",
+            "full_text": full_text,
+        }
+    }
+
+
+def parse_next_pitch_tags(root: TaggedNode) -> Dict[str, Any]:
+    blocks_root = direct_or_descendant_child(root, "blocks")
+    blocks: List[Dict[str, str]] = []
+    if blocks_root is not None:
+        for block in child_tags(blocks_root, "block"):
+            label = tagged_text(direct_or_descendant_child(block, "label"))
+            text = paragraph_text(direct_or_descendant_child(block, "text"))
+            if label and text:
+                blocks.append({
+                    "label": label,
+                    "text": text,
+                })
+
+    full_text = paragraph_text(direct_or_descendant_child(root, "full_text"))
+    if not full_text:
+        full_text = paragraph_text(direct_or_descendant_child(root, "text"))
+    if not full_text and blocks:
+        full_text = "\n\n".join(block["text"] for block in blocks)
+    if not full_text:
+        full_text = node_text_without_child_tags(root, {"title", "blocks", "label"})
+
+    return {
+        "next_pitch": {
+            "title": tagged_text(direct_or_descendant_child(root, "title")) or "Следующая версия pitch",
+            "blocks": blocks,
+            "full_text": full_text,
+        }
+    }
+
+
+def parse_recommendations_tags(root: TaggedNode) -> Dict[str, Any]:
+    changes_root = direct_or_descendant_child(root, "changes")
+    changes: List[Dict[str, Any]] = []
+    if changes_root is not None:
+        for change in child_tags(changes_root, "change"):
+            effect = direct_or_descendant_child(change, "audience_effect")
+            changes.append({
+                "title": tagged_text(direct_or_descendant_child(change, "title")),
+                "before": tagged_text(direct_or_descendant_child(change, "before")),
+                "after": tagged_text(direct_or_descendant_child(change, "after")),
+                "why_before_weaker": tagged_text(direct_or_descendant_child(change, "why_before_weaker")),
+                "why_after_better": tagged_text(direct_or_descendant_child(change, "why_after_better")),
+                "audience_effect": {
+                    "understands_better": tagged_text(direct_or_descendant_child(effect, "understands_better")) if effect else "",
+                    "feels_more": tagged_text(direct_or_descendant_child(effect, "feels_more")) if effect else "",
+                },
+            })
+
+    return {
+        "recommendations": {
+            "summary": tagged_items(direct_or_descendant_child(root, "summary"), 7),
+            "changes": changes,
+        }
+    }
 
 
 def to_clean_list(value: Any, limit: int) -> List[str]:
@@ -1262,15 +1708,16 @@ def validate_recommendations(data: Dict[str, Any]) -> Dict[str, Any]:
 # 8. WORKFLOW
 # ============================================================
 
-class SpeechGymWorkflow:
+class SpeechGymWorkflow: # Наш главный класс отвечающий за обаботку pitch-выступления
     def __init__(self, client: GigaChatClient):
         self.client = client
 
     def run(self, request_data: ReportRequest) -> Dict[str, Any]:
+        user_notes = extract_user_notes(request_data.notes, request_data.whisper_json)
         pitch = build_pitch_input(
             whisper_json=request_data.whisper_json,
-            pitch_type=request_data.pitch_type,
             target_duration_sec=request_data.target_duration_sec,
+            notes=user_notes,
         )
 
         passport_pitch = self.generate_passport(pitch)
@@ -1284,25 +1731,25 @@ class SpeechGymWorkflow:
                 "recommendations": recommendations["recommendations"],
             },
             "meta": {
-                "pitch_type": pitch["pitch_type"],
-                "language": pitch["language"],
                 "target_duration_sec": pitch["target_duration_sec"],
                 "actual_duration_sec": pitch["actual_duration_sec"],
                 "actual_duration": pitch["actual_duration"],
+                "actual_speaking_rate_wpm": pitch["actual_speaking_rate_wpm"],
+                "notes_used": bool(user_notes),
                 "model": self.client.config.model,
             },
         }
 
-    def generate_passport(self, pitch: Dict[str, Any]) -> Dict[str, Any]:
+    def generate_passport(self, pitch: Dict[str, Any]) -> Dict[str, Any]: # Создаем паспорт pitch-а
         payload = {
             "pitch": pitch,
             "knowledge_context": PASSPORT_KNOWLEDGE,
         }
 
-        data = self.client.chat_json(
+        data = self.client.chat_tagged(
             system_prompt=PASSPORT_SYSTEM_PROMPT,
             user_payload=payload,
-            expected_root_key="passport_pitch",
+            expected_root_tag="passport_pitch",
         )
 
         return validate_passport(data)
@@ -1320,39 +1767,50 @@ class SpeechGymWorkflow:
             "length_requirements": length_requirements,
         }
 
-        draft_data = self.client.chat_json(
+        draft_data = self.client.chat_tagged(
             system_prompt=NEXT_PITCH_DRAFT_SYSTEM_PROMPT,
             user_payload=draft_payload,
-            expected_root_key="next_pitch_draft",
+            expected_root_tag="next_pitch_draft",
         )
         draft = validate_next_pitch_draft(draft_data)
 
         min_words = length_requirements["target_word_count_range"]["min"]
-
+        max_words = length_requirements["target_word_count_range"]["max"]
         source_word_count = length_requirements["source_word_count"]
         max_allowed_word_loss = length_requirements["max_allowed_word_loss"]
 
-        for expansion_attempt in range(1, 6):
+        for adjustment_attempt in range(1, 6):
             draft_word_count = count_words(draft["next_pitch_draft"]["full_text"])
 
-            if draft_word_count >= min_words:
+            if min_words <= draft_word_count <= max_words:
                 break
 
-            expand_payload = {
-                **draft_payload,
-                "rejected_draft": draft["next_pitch_draft"],
-                "expansion_attempt": expansion_attempt,
-                "rejection_reason": (
+            if draft_word_count < min_words:
+                system_prompt = NEXT_PITCH_EXPAND_SYSTEM_PROMPT
+                rejection_reason = (
                     f"Черновик содержит {draft_word_count} слов, а нужно не меньше {min_words} слов "
                     f"для целевого времени выступления. Исходный pitch содержит {source_word_count} слов; "
                     f"нельзя терять больше {max_allowed_word_loss} слов, если пользователь укладывается во временные границы. "
                     "Напиши более полную версию, сохранив цельность pitch и раскрыв все смысловые блоки."
-                ),
+                )
+            else:
+                system_prompt = NEXT_PITCH_RESIZE_SYSTEM_PROMPT
+                rejection_reason = (
+                    f"Черновик содержит {draft_word_count} слов, а верхняя граница целевого диапазона — {max_words} слов. "
+                    f"Нижняя граница — {min_words} слов. Сократи текст до диапазона, убирая повторы, шум и лишнюю детализацию, "
+                    "но сохрани факты, цифры, экономику, traction, ask и важные смысловые связки."
+                )
+
+            expand_payload = {
+                **draft_payload,
+                "rejected_draft": draft["next_pitch_draft"],
+                "adjustment_attempt": adjustment_attempt,
+                "rejection_reason": rejection_reason,
             }
-            expanded_data = self.client.chat_json(
-                system_prompt=NEXT_PITCH_EXPAND_SYSTEM_PROMPT,
+            expanded_data = self.client.chat_tagged(
+                system_prompt=system_prompt,
                 user_payload=expand_payload,
-                expected_root_key="next_pitch_draft",
+                expected_root_tag="next_pitch_draft",
             )
             draft = validate_next_pitch_draft(expanded_data)
 
@@ -1360,10 +1818,10 @@ class SpeechGymWorkflow:
             "next_pitch_draft": draft["next_pitch_draft"],
         }
 
-        labeled_data = self.client.chat_json(
+        labeled_data = self.client.chat_tagged(
             system_prompt=NEXT_PITCH_LABELS_SYSTEM_PROMPT,
             user_payload=labels_payload,
-            expected_root_key="next_pitch",
+            expected_root_tag="next_pitch",
         )
         next_pitch = validate_next_pitch(labeled_data)
 
@@ -1383,10 +1841,10 @@ class SpeechGymWorkflow:
             "knowledge_context": RECOMMENDATIONS_KNOWLEDGE,
         }
 
-        data = self.client.chat_json(
+        data = self.client.chat_tagged(
             system_prompt=RECOMMENDATIONS_SYSTEM_PROMPT,
             user_payload=payload,
-            expected_root_key="recommendations",
+            expected_root_tag="recommendations",
         )
 
         return validate_recommendations(data)

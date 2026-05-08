@@ -6,6 +6,10 @@ import site
 import importlib
 from pathlib import Path
 
+
+os.environ['QT_QPA_PLATFORM_PLUGIN_PATH'] = 'C:\\Users\\Наталья Борисовна\\Desktop\\SpeechGym\\speechlab_pyqt\\.venv\\Lib\\site-packages\\PyQt5\\Qt5\\plugins\\platforms'
+
+
 # Ensure the speechlab_pyqt folder is importable when run from any directory
 APP_DIR = Path(__file__).resolve().parent
 sys.path.insert(0, str(APP_DIR))

@@ -1,7 +1,9 @@
 FROM python:3.11-slim-bookworm
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
-    PYTHONUNBUFFERED=1
+    PYTHONUNBUFFERED=1 \
+    ASR_MODEL_PATH=/models/faster-whisper-medium \
+    ASR_LOCAL_FILES_ONLY=true
 
 RUN set -eux; \
     apt-get update; \
@@ -19,6 +21,9 @@ WORKDIR /app
 
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
+
+RUN mkdir -p /models && \
+    python -c "from faster_whisper import download_model; download_model('medium', output_dir='/models/faster-whisper-medium', local_files_only=False)"
 
 COPY app.py .
 

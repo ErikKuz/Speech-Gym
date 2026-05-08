@@ -131,9 +131,12 @@ public class JobWorker {
             "segments", transcription.segments().size()
         ));
 
+        SessionEntity session = sessionRepository.findById(job.getSessionId())
+            .orElseThrow(() -> new IllegalStateException("Session missing for job."));
         Map<String, Object> whisperJson = objectMapper.convertValue(transcription, MAP_TYPE);
         String pitchType = resolvePitchType(job);
-        int targetDurationSec = resolveTargetDurationSec(job, transcription);
+        int targetDurationSec = resolveTargetDurationSec(job, session, transcription);
+        String notes = resolveAnalysisNotes(job, session);
 
         job = jobService.markStage(message.jobId(), JobStatus.RUNNING_NLP, 45, "NLP stage started.");
         log.info(
@@ -142,7 +145,7 @@ public class JobWorker {
             pitchType,
             targetDurationSec
         );
-        ReportAnalysisResponse analysis = speechReportClient.generateReport(whisperJson, pitchType, targetDurationSec);
+        ReportAnalysisResponse analysis = speechReportClient.generateReport(whisperJson, pitchType, targetDurationSec, notes);
         byte[] nlp = jsonBytes(analysis);
         artifactService.storeArtifact(job, ArtifactType.NLP_ANALYSIS_JSON, "application/json", nlp, Map.of(
             "stage", "NLP",
@@ -175,10 +178,8 @@ public class JobWorker {
         ));
 
         job = jobService.markStage(message.jobId(), JobStatus.RUNNING_REPORT, 92, "Report stage started.");
-        SessionEntity session = sessionRepository.findById(job.getSessionId())
-            .orElseThrow(() -> new IllegalStateException("Session missing for job."));
         ReportGenerationResult result = buildReportResult(analysis, voiceMetrics);
-        byte[] pdf = pdfReportGenerator.generate(session.getTitle(), result);
+        byte[] pdf = pdfReportGenerator.generate(session.getTitle(), result, analysis);
         ArtifactEntity pdfArtifact = artifactService.storeArtifact(
             job,
             ArtifactType.REPORT_PDF,
@@ -308,13 +309,27 @@ public class JobWorker {
         return normalized.isBlank() ? DEFAULT_PITCH_TYPE : normalized;
     }
 
-    private int resolveTargetDurationSec(JobEntity job, AsrTranscription transcription) {
+    private int resolveTargetDurationSec(JobEntity job, SessionEntity session, AsrTranscription transcription) {
         Integer optionValue = readIntOption(job, "targetDurationSec", "target_duration_sec");
         if (optionValue != null) {
             return clamp(optionValue, 30, 1800);
         }
+        if (session != null && session.getDurationTargetSeconds() > 0) {
+            return clamp(session.getDurationTargetSeconds(), 30, 1800);
+        }
         int derivedDuration = (int) Math.round(Math.max(estimateDurationSec(transcription), 30.0d));
         return clamp(derivedDuration, 30, 1800);
+    }
+
+    private String resolveAnalysisNotes(JobEntity job, SessionEntity session) {
+        String optionValue = readStringOption(job, "notes", "userNotes", "user_notes", "sessionNotes", "session_notes");
+        if (optionValue != null && !optionValue.isBlank()) {
+            return optionValue.trim();
+        }
+        if (session != null && session.getNotes() != null) {
+            return session.getNotes().trim();
+        }
+        return "";
     }
 
     private String readStringOption(JobEntity job, String... keys) {
