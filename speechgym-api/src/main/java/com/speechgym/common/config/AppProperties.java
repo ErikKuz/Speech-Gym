@@ -28,7 +28,9 @@ public record AppProperties(
     public record RabbitProperties(
         String exchange,
         String queue,
-        String routingKey
+        String routingKey,
+        String postAsrQueue,
+        String postAsrRoutingKey
     ) {
     }
 

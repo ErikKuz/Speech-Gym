@@ -23,4 +23,9 @@ public class JobPublisher {
         log.debug("Publishing job payload={}", message);
         rabbitTemplate.convertAndSend(properties.rabbit().exchange(), properties.rabbit().routingKey(), message);
     }
+
+    public void publishPostAsr(PostAsrJobMessage message) {
+        log.debug("Publishing post-ASR job payload={}", message);
+        rabbitTemplate.convertAndSend(properties.rabbit().exchange(), properties.rabbit().postAsrRoutingKey(), message);
+    }
 }
