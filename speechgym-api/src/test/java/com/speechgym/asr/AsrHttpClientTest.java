@@ -51,7 +51,7 @@ class AsrHttpClientTest {
             "/api/v1",
             new AppProperties.IdempotencyProperties(Duration.ofHours(24)),
             new AppProperties.JwtProperties("issuer", "secret", Duration.ofMinutes(15), Duration.ofDays(14)),
-            new AppProperties.RabbitProperties("exchange", "queue", "routing"),
+            new AppProperties.RabbitProperties("exchange", "queue", "routing", "post-asr-queue", "post-asr-routing"),
             new AppProperties.StorageProperties(
                 "uploads",
                 "artifacts",
@@ -118,7 +118,7 @@ class AsrHttpClientTest {
             "/api/v1",
             new AppProperties.IdempotencyProperties(Duration.ofHours(24)),
             new AppProperties.JwtProperties("issuer", "secret", Duration.ofMinutes(15), Duration.ofDays(14)),
-            new AppProperties.RabbitProperties("exchange", "queue", "routing"),
+            new AppProperties.RabbitProperties("exchange", "queue", "routing", "post-asr-queue", "post-asr-routing"),
             new AppProperties.StorageProperties(
                 "uploads",
                 "artifacts",

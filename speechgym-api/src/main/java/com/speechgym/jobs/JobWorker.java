@@ -1,5 +1,6 @@
 package com.speechgym.jobs;
 
+import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.LinkedHashSet;
@@ -21,6 +22,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.speechgym.asr.AsrClient;
 import com.speechgym.asr.AsrTranscription;
 import com.speechgym.artifacts.ArtifactEntity;
+import com.speechgym.artifacts.ArtifactRepository;
 import com.speechgym.artifacts.ArtifactService;
 import com.speechgym.artifacts.ArtifactType;
 import com.speechgym.reports.PdfReportGenerator;
@@ -68,6 +70,8 @@ public class JobWorker {
     private final AsrClient asrClient;
     private final SpeechReportClient speechReportClient;
     private final ArtifactService artifactService;
+    private final ArtifactRepository artifactRepository;
+    private final JobPublisher jobPublisher;
     private final ReportRepository reportRepository;
     private final SessionRepository sessionRepository;
     private final PdfReportGenerator pdfReportGenerator;
@@ -80,6 +84,8 @@ public class JobWorker {
         AsrClient asrClient,
         SpeechReportClient speechReportClient,
         ArtifactService artifactService,
+        ArtifactRepository artifactRepository,
+        JobPublisher jobPublisher,
         ReportRepository reportRepository,
         SessionRepository sessionRepository,
         PdfReportGenerator pdfReportGenerator,
@@ -91,6 +97,8 @@ public class JobWorker {
         this.asrClient = asrClient;
         this.speechReportClient = speechReportClient;
         this.artifactService = artifactService;
+        this.artifactRepository = artifactRepository;
+        this.jobPublisher = jobPublisher;
         this.reportRepository = reportRepository;
         this.sessionRepository = sessionRepository;
         this.pdfReportGenerator = pdfReportGenerator;
@@ -100,14 +108,24 @@ public class JobWorker {
     @RabbitListener(queues = "${app.rabbit.queue}")
     public void consume(ProcessJobMessage message) {
         try {
-            runPipeline(message);
+            runAsrStage(message);
         }
         catch (Exception exception) {
             jobService.markFailed(message.jobId(), "WORKER_ERROR", exception.getMessage());
         }
     }
 
-    private void runPipeline(ProcessJobMessage message) {
+    @RabbitListener(queues = "${app.rabbit.post-asr-queue}")
+    public void consumePostAsr(PostAsrJobMessage message) {
+        try {
+            runPostAsrStages(message);
+        }
+        catch (Exception exception) {
+            jobService.markFailed(message.jobId(), "WORKER_ERROR", exception.getMessage());
+        }
+    }
+
+    private void runAsrStage(ProcessJobMessage message) {
         JobEntity job = jobService.markStage(message.jobId(), JobStatus.RUNNING_ASR, 15, "ASR stage started.");
         UploadEntity upload = uploadService.getUploadForWorker(message.uploadId());
         StoredObject storedAudio = storageService.getObject(upload.getBucketName(), upload.getObjectKey());
@@ -121,7 +139,7 @@ public class JobWorker {
             storedAudio.content()
         );
         byte[] transcript = jsonBytes(transcription);
-        artifactService.storeArtifact(job, ArtifactType.ASR_TRANSCRIPT_JSON, "application/json", transcript, Map.of(
+        ArtifactEntity asrArtifact = artifactService.storeArtifact(job, ArtifactType.ASR_TRANSCRIPT_JSON, "application/json", transcript, Map.of(
             "stage", "ASR",
             "uploadId", upload.getId(),
             "language", transcription.language()
@@ -130,7 +148,19 @@ public class JobWorker {
             "language", transcription.language(),
             "segments", transcription.segments().size()
         ));
+        jobPublisher.publishPostAsr(new PostAsrJobMessage(
+            job.getId(),
+            job.getUserId(),
+            job.getSessionId(),
+            upload.getId(),
+            asrArtifact.getId()
+        ));
+        log.info("ASR stage completed jobId={} uploadId={}; post-ASR stage enqueued", job.getId(), upload.getId());
+    }
 
+    private void runPostAsrStages(PostAsrJobMessage message) {
+        JobEntity job = jobService.getJobForWorker(message.jobId());
+        AsrTranscription transcription = loadAsrTranscription(message);
         SessionEntity session = sessionRepository.findById(job.getSessionId())
             .orElseThrow(() -> new IllegalStateException("Session missing for job."));
         Map<String, Object> whisperJson = objectMapper.convertValue(transcription, MAP_TYPE);
@@ -190,6 +220,24 @@ public class JobWorker {
         upsertReport(job, pdfArtifact.getId(), result);
         jobService.markStageCompleted(job.getId(), JobStatus.RUNNING_REPORT, 98, "Report generated.", Map.of());
         jobService.markDone(job.getId());
+    }
+
+    private AsrTranscription loadAsrTranscription(PostAsrJobMessage message) {
+        ArtifactEntity artifact = artifactRepository.findById(message.asrArtifactId())
+            .orElseThrow(() -> new IllegalStateException("ASR transcript artifact is missing."));
+        if (!message.jobId().equals(artifact.getJobId())) {
+            throw new IllegalStateException("ASR transcript artifact belongs to another job.");
+        }
+        StoredObject storedTranscript = storageService.getObject(artifact.getBucketName(), artifact.getObjectKey());
+        if (storedTranscript == null || storedTranscript.content() == null || storedTranscript.content().length == 0) {
+            throw new IllegalStateException("ASR transcript artifact content is missing in object storage.");
+        }
+        try {
+            return objectMapper.readValue(storedTranscript.content(), AsrTranscription.class);
+        }
+        catch (IOException exception) {
+            throw new IllegalStateException("Unable to deserialize ASR transcript artifact.", exception);
+        }
     }
 
     @Transactional

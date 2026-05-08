@@ -6,6 +6,7 @@ import org.springframework.amqp.core.DirectExchange;
 import org.springframework.amqp.core.Queue;
 import org.springframework.amqp.core.QueueBuilder;
 import org.springframework.amqp.support.converter.Jackson2JsonMessageConverter;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 
@@ -22,14 +23,30 @@ public class RabbitMessagingConfig {
     }
 
     @Bean
+    Queue speechgymPostAsrJobsQueue(AppProperties properties) {
+        return QueueBuilder.durable(properties.rabbit().postAsrQueue()).build();
+    }
+
+    @Bean
     Binding speechgymJobsBinding(
-        Queue speechgymJobsQueue,
-        DirectExchange speechgymJobsExchange,
+        @Qualifier("speechgymJobsQueue") Queue speechgymJobsQueue,
+        @Qualifier("speechgymJobsExchange") DirectExchange speechgymJobsExchange,
         AppProperties properties
     ) {
         return BindingBuilder.bind(speechgymJobsQueue)
             .to(speechgymJobsExchange)
             .with(properties.rabbit().routingKey());
+    }
+
+    @Bean
+    Binding speechgymPostAsrJobsBinding(
+        @Qualifier("speechgymPostAsrJobsQueue") Queue speechgymPostAsrJobsQueue,
+        @Qualifier("speechgymJobsExchange") DirectExchange speechgymJobsExchange,
+        AppProperties properties
+    ) {
+        return BindingBuilder.bind(speechgymPostAsrJobsQueue)
+            .to(speechgymJobsExchange)
+            .with(properties.rabbit().postAsrRoutingKey());
     }
 
     @Bean

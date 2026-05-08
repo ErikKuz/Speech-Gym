@@ -30,6 +30,7 @@ import com.speechgym.common.idempotency.IdempotencyKeyRepository;
 import com.speechgym.jobs.JobEventRepository;
 import com.speechgym.jobs.JobPublisher;
 import com.speechgym.jobs.JobRepository;
+import com.speechgym.jobs.PostAsrJobMessage;
 import com.speechgym.jobs.ProcessJobMessage;
 import com.speechgym.reports.ReportRepository;
 import com.speechgym.sessions.SessionRepository;
@@ -193,6 +194,11 @@ abstract class AbstractIntegrationTest {
             return new JobPublisher(null, properties) {
                 @Override
                 public void publish(ProcessJobMessage message) {
+                    // Intentionally no-op for integration tests.
+                }
+
+                @Override
+                public void publishPostAsr(PostAsrJobMessage message) {
                     // Intentionally no-op for integration tests.
                 }
             };

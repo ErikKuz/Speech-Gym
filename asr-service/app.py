@@ -10,9 +10,7 @@ from typing import Any, Dict, List, Optional
 
 from fastapi import FastAPI, UploadFile, File, HTTPException
 from pydantic import BaseModel
-from faster_whisper import WhisperModel
-
-import requests
+from faster_whisper import WhisperModel, download_model
 
 APP_NAME = "asr-service"
 logger = logging.getLogger("uvicorn.error")
@@ -95,6 +93,11 @@ async def startup() -> None:
             num_workers=NUM_WORKERS,
             local_files_only=LOCAL_FILES_ONLY,
         )
+        transcribe_executor = ThreadPoolExecutor(
+            max_workers=max_concurrent,
+            thread_name_prefix="asr-transcribe",
+        )
+        transcribe_semaphore = asyncio.Semaphore(max_concurrent)
     except Exception as e:
         raise RuntimeError(f"Failed to init WhisperModel: {e}") from e
 
@@ -113,6 +116,7 @@ def health() -> Dict[str, Any]:
         "model_id": MODEL_ID,
         "model_path": MODEL_PATH,
         "model_ready": model is not None,
+        "transcribe_ready": transcribe_executor is not None and transcribe_semaphore is not None,
         "local_files_only": LOCAL_FILES_ONLY,
         "device": DEVICE,
         "compute_type": COMPUTE_TYPE,

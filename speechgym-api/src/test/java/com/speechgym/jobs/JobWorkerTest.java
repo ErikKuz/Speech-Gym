@@ -24,6 +24,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.speechgym.asr.AsrClient;
 import com.speechgym.asr.AsrTranscription;
 import com.speechgym.artifacts.ArtifactEntity;
+import com.speechgym.artifacts.ArtifactRepository;
 import com.speechgym.artifacts.ArtifactService;
 import com.speechgym.artifacts.ArtifactType;
 import com.speechgym.reports.PdfReportGenerator;
@@ -58,6 +59,12 @@ class JobWorkerTest {
     private ArtifactService artifactService;
 
     @Mock
+    private ArtifactRepository artifactRepository;
+
+    @Mock
+    private JobPublisher jobPublisher;
+
+    @Mock
     private ReportRepository reportRepository;
 
     @Mock
@@ -67,7 +74,7 @@ class JobWorkerTest {
     private PdfReportGenerator pdfReportGenerator;
 
     @Test
-    void consumeLoadsAudioFromStorageAndStoresRawAsrTranscript() {
+    void consumeLoadsAudioFromStorageAndStoresRawAsrTranscript() throws Exception {
         ObjectMapper objectMapper = new ObjectMapper();
         JobWorker worker = new JobWorker(
             jobService,
@@ -76,6 +83,8 @@ class JobWorkerTest {
             asrClient,
             speechReportClient,
             artifactService,
+            artifactRepository,
+            jobPublisher,
             reportRepository,
             sessionRepository,
             pdfReportGenerator,
@@ -108,6 +117,9 @@ class JobWorkerTest {
 
         ArtifactEntity storedArtifact = new ArtifactEntity();
         ReflectionTestUtils.setField(storedArtifact, "id", UUID.randomUUID());
+        storedArtifact.setJobId(jobId);
+        storedArtifact.setBucketName("speechgym-artifacts");
+        storedArtifact.setObjectKey("user/session/job/asr_transcript_json");
 
         when(jobService.markStage(eq(jobId), eq(JobStatus.RUNNING_ASR), eq(15), any())).thenReturn(job);
         when(jobService.markStage(eq(jobId), eq(JobStatus.RUNNING_NLP), eq(45), any())).thenReturn(job);
@@ -164,12 +176,27 @@ class JobWorkerTest {
                 new ReportAnalysisResponse.Meta("investor_pitch", "ru", 420, 1.2, "0:01", 100, true, "GigaChat-Max")
             ));
         when(reportRepository.findByJobId(jobId)).thenReturn(Optional.empty());
+        when(jobService.getJobForWorker(jobId)).thenReturn(job);
+        when(artifactRepository.findById(storedArtifact.getId())).thenReturn(Optional.of(storedArtifact));
+        when(storageService.getObject(storedArtifact.getBucketName(), storedArtifact.getObjectKey()))
+            .thenReturn(new StoredObject(objectMapper.writeValueAsBytes(new AsrTranscription(
+                1.2,
+                "ru",
+                0.99,
+                List.of(new AsrTranscription.AsrSegment(
+                    0.0,
+                    1.2,
+                    "privet mir",
+                    List.of(new AsrTranscription.AsrWord(0.0, 0.5, "privet"))
+                ))
+            )), "application/json", 128));
         when(sessionRepository.findById(sessionId)).thenReturn(Optional.of(session));
         when(pdfReportGenerator.generate(eq("Demo session"), any(), any()))
             .thenReturn("pdf".getBytes(StandardCharsets.UTF_8));
         when(artifactService.storeArtifact(eq(job), any(), any(), any(), any())).thenReturn(storedArtifact);
 
         worker.consume(new ProcessJobMessage(jobId, userId, sessionId, uploadId));
+        worker.consumePostAsr(new PostAsrJobMessage(jobId, userId, sessionId, uploadId, storedArtifact.getId()));
 
         ArgumentCaptor<ArtifactType> typeCaptor = ArgumentCaptor.forClass(ArtifactType.class);
         ArgumentCaptor<byte[]> bytesCaptor = ArgumentCaptor.forClass(byte[].class);
@@ -182,6 +209,9 @@ class JobWorkerTest {
         assertThat(storedTranscript).contains("\"language\":\"ru\"");
         assertThat(storedTranscript).contains("\"text\":\"privet mir\"");
         assertThat(storedTranscript).contains("privet mir");
+        ArgumentCaptor<PostAsrJobMessage> postAsrMessageCaptor = ArgumentCaptor.forClass(PostAsrJobMessage.class);
+        verify(jobPublisher).publishPostAsr(postAsrMessageCaptor.capture());
+        assertThat(postAsrMessageCaptor.getValue().asrArtifactId()).isEqualTo(storedArtifact.getId());
         ArgumentCaptor<Map<String, Object>> whisperCaptor = ArgumentCaptor.forClass(Map.class);
         verify(speechReportClient).generateReport(
             whisperCaptor.capture(),
