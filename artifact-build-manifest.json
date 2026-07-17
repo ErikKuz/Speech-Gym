@@ -1,0 +1,38 @@
+{
+  "output": "C:\\Users\\user\\OneDrive\\Рабочий стол\\projectUniv\\SpeechGym_backend_file_flow.pptx",
+  "outputBytes": 26052,
+  "slideCount": 2,
+  "slideSize": {
+    "width": 1280,
+    "height": 720
+  },
+  "previewDir": "C:\\Users\\user\\AppData\\Local\\Temp\\codex-presentations\\manual-20260513-speechgym-backend\\backend-flow\\preview",
+  "previewPaths": [
+    "C:\\Users\\user\\AppData\\Local\\Temp\\codex-presentations\\manual-20260513-speechgym-backend\\backend-flow\\preview\\slide-01.png",
+    "C:\\Users\\user\\AppData\\Local\\Temp\\codex-presentations\\manual-20260513-speechgym-backend\\backend-flow\\preview\\slide-02.png"
+  ],
+  "layoutDir": "C:\\Users\\user\\AppData\\Local\\Temp\\codex-presentations\\manual-20260513-speechgym-backend\\backend-flow\\layout",
+  "layoutResults": [
+    {
+      "layoutPath": "C:\\Users\\user\\AppData\\Local\\Temp\\codex-presentations\\manual-20260513-speechgym-backend\\backend-flow\\layout\\slide-01.layout.json"
+    },
+    {
+      "layoutPath": "C:\\Users\\user\\AppData\\Local\\Temp\\codex-presentations\\manual-20260513-speechgym-backend\\backend-flow\\layout\\slide-02.layout.json"
+    }
+  ],
+  "contactSheet": "C:\\Users\\user\\AppData\\Local\\Temp\\codex-presentations\\manual-20260513-speechgym-backend\\backend-flow\\preview\\contact-sheet.png",
+  "slides": [
+    {
+      "index": 1,
+      "requestedSlideNumber": 1,
+      "modulePath": "C:\\Users\\user\\AppData\\Local\\Temp\\codex-presentations\\manual-20260513-speechgym-backend\\backend-flow\\slides\\slide-01.mjs",
+      "exportName": "slide01"
+    },
+    {
+      "index": 2,
+      "requestedSlideNumber": 2,
+      "modulePath": "C:\\Users\\user\\AppData\\Local\\Temp\\codex-presentations\\manual-20260513-speechgym-backend\\backend-flow\\slides\\slide-02.mjs",
+      "exportName": "slide02"
+    }
+  ]
+}
